@@ -399,7 +399,7 @@ function normalizar_(s) {
   return String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
-function categorizar_(descripcion, tipo, config) {
+function categorizar_(descripcion, tipo, config, porDefecto) {
   if (tipo === 'traspaso') return 'Traspaso';
   const reglas = (config && config.reglas) || [];
   const texto = normalizar_(descripcion);
@@ -411,7 +411,7 @@ function categorizar_(descripcion, tipo, config) {
       }
     } catch (e) { /* patrón inválido */ }
   }
-  return tipo === 'ingreso' ? 'Transferencias recibidas' : 'Transferencias';
+  return porDefecto || (tipo === 'ingreso' ? 'Transferencias recibidas' : 'Transferencias');
 }
 
 function construirMovimiento_(id, datos, cuenta, origen, fecha, config) {
@@ -421,7 +421,7 @@ function construirMovimiento_(id, datos, cuenta, origen, fecha, config) {
     fecha: datos.fecha || Utilities.formatDate(fecha, CONFIG.ZONA, 'yyyy-MM-dd'),
     monto: datos.monto,
     tipo: datos.tipo,
-    categoria: categorizar_(datos.descripcion, datos.tipo, config),
+    categoria: categorizar_(datos.descripcion, datos.tipo, config, origen === 'notif' && datos.tipo === 'gasto' ? 'Otros' : ''),
     descripcion: datos.descripcion,
     cuenta: cuenta,
     origen: origen,
@@ -543,6 +543,8 @@ function registrarNotificacion_(datos) {
   lock.waitLock(20000);
   try {
     if (idExiste_(ss, id)) return { ok: true, duplicado: true };
+    // Las transferencias ya llegan por correo (con más detalle); se ignoran aquí para no duplicarlas.
+    if (/transfer/i.test(texto)) return { ok: true, guardado: false, motivo: 'transferencia (se toma del correo)' };
     const interpretado = interpretarTexto(datos.texto, datos.titulo);
     if (!interpretado) {
       anotarSinLeer_(ss, cuenta + ' (notificación)', datos.titulo || '', datos.texto || '');
