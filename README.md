@@ -67,6 +67,8 @@ Cada 15 minutos, el script revisa tu Gmail en busca de correos de **Santander** 
 - Para revisar qué entiende de tus correos **sin guardar nada**, ejecuta la función **`probarCorreos`** en Apps Script y mira el registro.
 - Los correos que no logra leer quedan en la pestaña **"Sin leer"** de tu planilla. Si alguno debería leerse, copia su texto (borrando datos personales) y pide que se ajuste la función `interpretarTexto`.
 - Las búsquedas de Gmail están en `CONFIG.FUENTES`, al inicio de `Code.gs`.
+- Si mejoras el lector, ejecuta **`reprocesarCorreos`**: vuelve a leer los correos ya importados y corrige esos movimientos en la app. No toca lo que agregaste a mano.
+- Las transferencias de Santander se entienden por los bloques "Datos de origen" y "Datos de destino". Si tú eres el destino, es un ingreso. Si eres ambos (por ejemplo, de Santander a tu Mercado Pago), es un traspaso y no cuenta como gasto.
 
 ### Compras con tarjeta (notificaciones del celular)
 

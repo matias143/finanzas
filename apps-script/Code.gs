@@ -237,24 +237,94 @@ function anotarSinLeer_(ss, fuente, asunto, texto) {
 
 // ============ Lectura de texto (correos y notificaciones) ============
 
-/** Interpreta un texto bancario. Devuelve {monto, tipo, descripcion} o null si no encuentra un monto. */
+/**
+ * Interpreta un texto bancario. Devuelve {monto, tipo, descripcion, fecha?} o null si no es un movimiento.
+ * tipo: 'gasto' | 'ingreso' | 'traspaso' (entre tus propias cuentas).
+ */
 function interpretarTexto(texto, asunto) {
-  const t = String((asunto || '') + '\n' + (texto || '')).replace(/ /g, ' ').replace(/[ \t]+/g, ' ');
+  const crudo = String((asunto || '') + '\n' + (texto || '')).replace(/ /g, ' ');
+  const t = crudo.replace(/[ \t]+/g, ' ');
 
   const monto = extraerMonto_(t);
   if (!monto) return null;
 
-  const esIngreso = /(recibiste|te (transfiri|envi|deposit)|has recibido|transferencia recibida|abono|ingreso de dinero|te lleg[oó]|dep[oó]sito recibido)/i.test(t);
+  // Formatos conocidos de Santander (comprobantes) primero.
+  const lineas = crudo.split(/[\n\t\r]+/).map(function (l) { return l.trim(); }).filter(Boolean);
+  const fecha = extraerFecha_(t);
+  const santander = interpretarSantander_(t, lineas);
+  if (santander) {
+    santander.monto = monto;
+    if (fecha) santander.fecha = fecha;
+    return santander;
+  }
+
+  const esIngreso = /(recibiste|te (transfiri[oó]|envi[oó]|deposit[oó])|has recibido|transferencia recibida|ingreso de dinero|te lleg[oó]|dep[oó]sito recibido)/i.test(t);
   const esGasto = /(transferiste|enviaste|has (transferido|enviado|realizado)|transferencia (realizada|enviada|a terceros|exitosa|de fondos)|pagaste|compra|cargo|realizaste|pago (realizado|aprobado|exitoso)|giro)/i.test(t);
   if (!esIngreso && !esGasto) return null;
   const tipo = esIngreso && !/(transferiste|enviaste|pagaste)/i.test(t) ? 'ingreso' : 'gasto';
 
-  return { monto: monto, tipo: tipo, descripcion: extraerContraparte_(t, tipo) || limpiar_(asunto) || 'Movimiento' };
+  const r = { monto: monto, tipo: tipo, descripcion: extraerContraparte_(t, tipo) || limpiar_(asunto) || 'Movimiento' };
+  if (fecha) r.fecha = fecha;
+  return r;
+}
+
+/** Comprobantes de Santander: "Transferencia de fondos" y "Pago de Cuentas". */
+function interpretarSantander_(t, lineas) {
+  const valorDe = function (desde, hasta, etiqueta) {
+    for (let i = desde; i < hasta - 1; i++) if (etiqueta.test(lineas[i])) return lineas[i + 1];
+    return '';
+  };
+  const indice = function (re, desde) {
+    for (let i = desde || 0; i < lineas.length; i++) if (re.test(lineas[i])) return i;
+    return -1;
+  };
+
+  // Transferencia: bloques "Datos de origen" y "Datos de destino".
+  const iOrigen = indice(/^datos de origen/i);
+  const iDestino = indice(/^datos de destino/i);
+  if (/transferencia/i.test(t) && iOrigen >= 0 && iDestino > iOrigen) {
+    const nombreOrigen = limpiar_(valorDe(iOrigen, iDestino, /^nombre$/i));
+    const nombreDestino = limpiar_(valorDe(iDestino, lineas.length, /^nombre$/i));
+    const yo = (t.match(/Estimad[oa]\s*\(?\s*a?\s*\)?\s*([^:,\n]+)/i) || [])[1] || '';
+    const origenSoyYo = esMiNombre_(nombreOrigen, yo);
+    const destinoSoyYo = esMiNombre_(nombreDestino, yo);
+    if (origenSoyYo && destinoSoyYo) return { tipo: 'traspaso', descripcion: 'Traspaso a ' + (valorDe(iDestino, lineas.length, /^banco$/i) || 'cuenta propia') };
+    if (destinoSoyYo) return { tipo: 'ingreso', descripcion: nombreOrigen || 'Transferencia recibida' };
+    return { tipo: 'gasto', descripcion: nombreDestino || 'Transferencia' };
+  }
+
+  // Pago de cuentas: tabla "Compañía | N° Cliente | Fecha de venc. | Monto".
+  if (/pago de cuentas|monto pagado/i.test(t)) {
+    const iComp = indice(/^compa[ñn][ií]a$/i);
+    let empresa = '';
+    if (iComp >= 0) {
+      const iMonto = indice(/^monto$/i, iComp);
+      if (iMonto >= 0) empresa = lineas[iMonto + 1] || '';
+    }
+    return { tipo: 'gasto', descripcion: limpiar_(empresa) || 'Pago de cuentas' };
+  }
+  return null;
+}
+
+/** ¿El nombre corresponde a quien recibe el correo ("Estimado(a) ...")? */
+function esMiNombre_(nombre, estimado) {
+  const n = normalizar_(nombre).split(' ');
+  const yo = normalizar_(estimado).split(' ').filter(function (p) { return p.length >= 3; });
+  if (!yo.length || !n[0]) return false;
+  const coinciden = yo.filter(function (p) { return n.indexOf(p) >= 0; }).length;
+  return yo.length === 1 ? coinciden === 1 : coinciden >= 2;
+}
+
+/** Fecha escrita en el correo ("realizada el 13/10/2026", "con fecha 09-09-2026") → "2026-10-13". */
+function extraerFecha_(t) {
+  const m = t.match(/(?:realizad[ao] el|con fecha|fecha:?)\s*(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})/i);
+  if (!m) return '';
+  return m[3] + '-' + ('0' + m[2]).slice(-2) + '-' + ('0' + m[1]).slice(-2);
 }
 
 function extraerMonto_(t) {
   // Prioriza montos junto a la palabra "monto"/"total"; si no, el primero con signo $.
-  const etiquetado = t.match(/(?:monto|total|importe|valor)[^$\d\n]{0,25}\$?\s*([0-9]{1,3}(?:\.[0-9]{3})+|[0-9]+)(?:,[0-9]{1,2})?/i);
+  const etiquetado = t.match(/(?:monto|total|importe|valor)[^$\d]{0,30}\$\s*([0-9]{1,3}(?:\.[0-9]{3})+|[0-9]+)(?:,[0-9]{1,2})?/i);
   const simple = t.match(/\$\s*([0-9]{1,3}(?:\.[0-9]{3})+|[0-9]+)(?:,[0-9]{1,2})?/);
   const m = etiquetado || simple;
   if (!m) return 0;
@@ -292,6 +362,7 @@ function normalizar_(s) {
 }
 
 function categorizar_(descripcion, tipo, config) {
+  if (tipo === 'traspaso') return 'Traspaso';
   const reglas = (config && config.reglas) || [];
   const texto = normalizar_(descripcion);
   for (let i = 0; i < reglas.length; i++) {
@@ -309,7 +380,7 @@ function construirMovimiento_(id, datos, cuenta, origen, fecha, config) {
   const ahora = new Date().toISOString();
   return {
     id: id,
-    fecha: Utilities.formatDate(fecha, CONFIG.ZONA, 'yyyy-MM-dd'),
+    fecha: datos.fecha || Utilities.formatDate(fecha, CONFIG.ZONA, 'yyyy-MM-dd'),
     monto: datos.monto,
     tipo: datos.tipo,
     categoria: categorizar_(datos.descripcion, datos.tipo, config),
@@ -367,6 +438,44 @@ function probarCorreos() {
       Logger.log('Resultado: ' + JSON.stringify(interpretarTexto(msg.getPlainBody(), msg.getSubject())));
     });
   });
+}
+
+/**
+ * Vuelve a leer los correos de los últimos DIAS_ATRAS días y CORRIGE los movimientos que ya se habían
+ * importado desde correos (útil después de mejorar el lector). No toca lo que agregaste a mano
+ * ni lo que eliminaste en la app.
+ */
+function reprocesarCorreos() {
+  const ss = libro_();
+  const config = leerConfig_(ss);
+  const existentes = {};
+  leerMovimientos_(ss).forEach(function (m) { existentes[m.id] = m; });
+  const ahora = new Date().toISOString();
+  const cambios = [];
+  let corregidos = 0, nuevos = 0, quitados = 0;
+
+  CONFIG.FUENTES.forEach(function (f) {
+    GmailApp.search(f.query + ' newer_than:' + CONFIG.DIAS_ATRAS + 'd', 0, 100).forEach(function (hilo) {
+      hilo.getMessages().forEach(function (msg) {
+        const id = 'gm_' + msg.getId();
+        const previo = existentes[id];
+        if (previo && previo.eliminado) return;
+        const datos = interpretarTexto(msg.getPlainBody(), msg.getSubject());
+        if (!datos) {
+          if (previo) { previo.eliminado = true; previo.actualizado = ahora; cambios.push(previo); quitados++; }
+          return;
+        }
+        const m = construirMovimiento_(id, datos, f.cuenta, 'gmail', msg.getDate(), config);
+        if (previo) { m.creado = previo.creado || m.creado; m.notas = previo.notas || ''; corregidos++; } else { nuevos++; }
+        cambios.push(m);
+      });
+    });
+  });
+
+  const lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try { if (cambios.length) guardarMovimientos_(ss, cambios, ahora); } finally { lock.releaseLock(); }
+  Logger.log('Corregidos: ' + corregidos + ' · Nuevos: ' + nuevos + ' · Quitados: ' + quitados);
 }
 
 // ============ Notificaciones del celular (MacroDroid) ============
