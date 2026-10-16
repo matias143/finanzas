@@ -252,9 +252,8 @@ function interpretarTexto(texto, asunto) {
   if (!monto) return null;
 
   // Formatos conocidos de Santander (comprobantes) primero.
-  const lineas = crudo.split(/[\n\t\r]+/).map(function (l) { return l.trim(); }).filter(Boolean);
   const fecha = extraerFecha_(t);
-  const santander = interpretarSantander_(t, lineas);
+  const santander = interpretarSantander_(t);
   if (santander) {
     santander.monto = monto;
     if (fecha) santander.fecha = fecha;
@@ -277,41 +276,41 @@ function interpretarTexto(texto, asunto) {
   return r;
 }
 
-/** Comprobantes de Santander: "Transferencia de fondos" y "Pago de Cuentas". */
-function interpretarSantander_(t, lineas) {
-  const valorDe = function (desde, hasta, etiqueta) {
-    for (let i = desde; i < hasta - 1; i++) if (etiqueta.test(lineas[i])) return lineas[i + 1];
-    return '';
-  };
-  const indice = function (re, desde) {
-    for (let i = desde || 0; i < lineas.length; i++) if (re.test(lineas[i])) return i;
-    return -1;
+/**
+ * Comprobantes de Santander: "Transferencia de fondos" y "Pago de Cuentas".
+ * Trabaja sobre el texto "aplanado" (todo en una línea), porque según cómo Gmail entrega el correo
+ * los campos pueden venir en líneas separadas, separados por tabs o todos seguidos.
+ */
+function interpretarSantander_(t) {
+  const plano = String(t).replace(/[*_]/g, ' ').replace(/\s+/g, ' ');
+  const FIN_CAMPO = '(?=\\s*(?:Comentario|RUT|Tipo de cuenta|N\\S{0,2}\\s*de cuenta|E-?mail|Datos de|Antes de imprimir|Nota:|$))';
+  const campo = function (bloque, etiqueta) {
+    const m = bloque.match(new RegExp('\\b' + etiqueta + '\\s*:?\\s*(\\S.*?)' + FIN_CAMPO, 'i'));
+    return m ? limpiar_(m[1]) : '';
   };
 
   // Transferencia: bloques "Datos de origen" y "Datos de destino".
-  const iOrigen = indice(/^datos de origen/i);
-  const iDestino = indice(/^datos de destino/i);
-  if (/transferencia/i.test(t) && iOrigen >= 0 && iDestino > iOrigen) {
-    const nombreOrigen = limpiar_(valorDe(iOrigen, iDestino, /^nombre$/i));
-    const nombreDestino = limpiar_(valorDe(iDestino, lineas.length, /^nombre$/i));
-    const yo = (t.match(/Estimad[oa]\s*\(?\s*a?\s*\)?\s*([^:,\n]+)/i) || [])[1] || '';
-    const origenSoyYo = esMiNombre_(nombreOrigen, yo);
+  const iOrigen = plano.search(/datos de origen/i);
+  const iDestino = plano.search(/datos de destino/i);
+  if (/transferencia/i.test(plano) && iOrigen >= 0 && iDestino > iOrigen) {
+    const origen = plano.slice(iOrigen + 'datos de origen'.length, iDestino);
+    const destino = plano.slice(iDestino + 'datos de destino'.length);
+    const nombreOrigen = campo(origen, 'Nombre');
+    const nombreDestino = campo(destino, 'Nombre');
+    const banco = campo(destino, 'Banco');
+    const yo = (plano.match(/Estimad[oa]\s*\(?\s*a?\s*\)?\s*([^:,]+?)\s*[:,]/i) || [])[1] || miNombre_();
+    const origenSoyYo = esMiNombre_(nombreOrigen, yo) || esMiNombre_(nombreOrigen, miNombre_());
     if (origenSoyYo) recordarMiNombre_(nombreOrigen);
-    const destinoSoyYo = esMiNombre_(nombreDestino, yo);
-    if (origenSoyYo && destinoSoyYo) return { tipo: 'traspaso', descripcion: 'Traspaso a ' + (valorDe(iDestino, lineas.length, /^banco$/i) || 'cuenta propia') };
+    const destinoSoyYo = esMiNombre_(nombreDestino, yo) || esMiNombre_(nombreDestino, miNombre_());
+    if (origenSoyYo && destinoSoyYo) return { tipo: 'traspaso', descripcion: 'Traspaso a ' + (banco || 'cuenta propia') };
     if (destinoSoyYo) return { tipo: 'ingreso', descripcion: nombreOrigen || 'Transferencia recibida' };
     return { tipo: 'gasto', descripcion: nombreDestino || 'Transferencia' };
   }
 
-  // Pago de cuentas: tabla "Compañía | N° Cliente | Fecha de venc. | Monto".
-  if (/pago de cuentas|monto pagado/i.test(t)) {
-    const iComp = indice(/^compa[ñn][ií]a$/i);
-    let empresa = '';
-    if (iComp >= 0) {
-      const iMonto = indice(/^monto$/i, iComp);
-      if (iMonto >= 0) empresa = lineas[iMonto + 1] || '';
-    }
-    return { tipo: 'gasto', descripcion: limpiar_(empresa) || 'Pago de cuentas' };
+  // Pago de cuentas: tabla "Compañía | N° Cliente | Fecha de venc. | Monto" seguida de los valores.
+  if (/pago de cuentas|monto pagado/i.test(plano)) {
+    const m = plano.match(/Compa\S{1,3}a\s+N\S{0,2}\s*Cliente\s+Fecha de venc\.?\s+Monto\s+(.+?)\s+[\d.\-kK]{5,}/i);
+    return { tipo: 'gasto', descripcion: (m && limpiar_(m[1])) || 'Pago de cuentas' };
   }
   return null;
 }
@@ -457,6 +456,18 @@ function probarCorreos() {
       Logger.log('Asunto: ' + msg.getSubject());
       Logger.log('Resultado: ' + JSON.stringify(interpretarTexto(msg.getPlainBody(), msg.getSubject())));
     });
+  });
+}
+
+/** Diagnóstico: muestra el texto exacto que el script recibe del último correo de cada fuente. */
+function verUltimoCorreo() {
+  CONFIG.FUENTES.forEach(function (f) {
+    const hilos = GmailApp.search(f.query, 0, 1);
+    if (!hilos.length) { Logger.log('── ' + f.cuenta + ': sin correos'); return; }
+    const msg = hilos[0].getMessages()[hilos[0].getMessageCount() - 1];
+    Logger.log('── ' + f.cuenta + ' · ' + msg.getSubject());
+    Logger.log(msg.getPlainBody().slice(0, 2500));
+    Logger.log('Resultado: ' + JSON.stringify(interpretarTexto(msg.getPlainBody(), msg.getSubject())));
   });
 }
 
