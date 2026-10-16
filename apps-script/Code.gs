@@ -245,7 +245,7 @@ function anotarSinLeer_(ss, fuente, asunto, texto) {
  * tipo: 'gasto' | 'ingreso' | 'traspaso' (entre tus propias cuentas).
  */
 function interpretarTexto(texto, asunto) {
-  const crudo = String((asunto || '') + '\n' + (texto || '')).replace(/ /g, ' ');
+  const crudo = arreglarTildes_(String((asunto || '') + '\n' + (texto || ''))).replace(/\u00a0/g, ' ');
   const t = crudo.replace(/[ \t]+/g, ' ');
 
   const monto = extraerMonto_(t);
@@ -298,11 +298,21 @@ function interpretarSantander_(t) {
     const nombreOrigen = campo(origen, 'Nombre');
     const nombreDestino = campo(destino, 'Nombre');
     const banco = campo(destino, 'Banco');
+    // El RUT es lo más confiable: si origen y destino tienen el mismo RUT, es una cuenta tuya
+    // (aunque en Santander tengas al destinatario guardado con un apodo como "Mercado pago").
+    const rutDe = function (bloque) { const m = bloque.match(/\bRUT\s*:?\s*([\d.]{5,12}\s*-?\s*[\dkK])\b/i); return m ? m[1].replace(/[^\dkK]/g, '').toUpperCase() : ''; };
+    const rutOrigen = rutDe(origen), rutDestino = rutDe(destino);
+    const mismoRut = rutOrigen && rutOrigen === rutDestino;
     const yo = (plano.match(/Estimad[oa]\s*\(?\s*a?\s*\)?\s*([^:,]+?)\s*[:,]/i) || [])[1] || miNombre_();
     const origenSoyYo = esMiNombre_(nombreOrigen, yo) || esMiNombre_(nombreOrigen, miNombre_());
     if (origenSoyYo) recordarMiNombre_(nombreOrigen);
     const destinoSoyYo = esMiNombre_(nombreDestino, yo) || esMiNombre_(nombreDestino, miNombre_());
-    if (origenSoyYo && destinoSoyYo) return { tipo: 'traspaso', descripcion: 'Traspaso a ' + (banco || 'cuenta propia') };
+    if (mismoRut || (origenSoyYo && destinoSoyYo)) {
+      const alias = nombreDestino && !esMiNombre_(nombreDestino, yo) && !esMiNombre_(nombreDestino, miNombre_()) ? nombreDestino : '';
+      // Incluye el banco para que el ahorro (ej. BancoEstado) se reconozca aunque el apodo sea otro.
+      const bancoExtra = alias && banco && normalizar_(banco).indexOf(normalizar_(alias)) < 0 ? ' (' + banco + ')' : '';
+      return { tipo: 'traspaso', descripcion: 'Traspaso a ' + (alias ? alias + bancoExtra : banco || 'cuenta propia') };
+    }
     if (destinoSoyYo) return { tipo: 'ingreso', descripcion: nombreOrigen || 'Transferencia recibida' };
     return { tipo: 'gasto', descripcion: nombreDestino || 'Transferencia' };
   }
@@ -313,6 +323,15 @@ function interpretarSantander_(t) {
     return { tipo: 'gasto', descripcion: (m && limpiar_(m[1])) || 'Pago de cuentas' };
   }
   return null;
+}
+
+/** Repara texto con tildes mal codificadas ("zuÃ±iga" → "zuñiga"). */
+function arreglarTildes_(s) {
+  if (!/[ÃÂ]/.test(s)) return s;
+  const mapa = { 'Ã¡': 'á', 'Ã©': 'é', 'Ã­': 'í', 'Ã³': 'ó', 'Ãº': 'ú', 'Ã±': 'ñ', 'Ã¼': 'ü',
+    'Ã\u0081': 'Á', 'Ã‰': 'É', 'Ã\u008d': 'Í', 'Ã“': 'Ó', 'Ãš': 'Ú', 'Ã‘': 'Ñ', 'Ãœ': 'Ü',
+    'Â°': '°', 'Âº': 'º', 'Â¿': '¿', 'Â¡': '¡', 'Â\u00a0': ' ' };
+  return s.replace(/[ÃÂ][\s\S]/g, function (x) { return mapa[x] || x; });
 }
 
 function miNombre_() {
