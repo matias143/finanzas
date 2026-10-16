@@ -1,0 +1,8 @@
+# Nunca subir datos ni claves
+*.json.bak
+respaldo*.json
+finanzas-respaldo-*.json
+.env
+.clasp.json
+node_modules/
+.DS_Store
