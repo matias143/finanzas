@@ -15,6 +15,9 @@
 // ============ Configuración editable ============
 const CONFIG = {
   ZONA: 'America/Santiago',
+  // Tu nombre como aparece en el banco. Si lo dejas vacío, se aprende solo de los comprobantes de Santander.
+  // Sirve para reconocer transferencias entre tus propias cuentas (traspasos).
+  MI_NOMBRE: '',
   DIAS_ATRAS: 30,                    // cuántos días hacia atrás revisar correos
   ETIQUETA: 'finanzas-procesado',    // etiqueta de Gmail para marcar correos ya leídos
   MINUTOS_ENTRE_REVISIONES: 15,
@@ -26,7 +29,7 @@ const CONFIG = {
     },
     {
       cuenta: 'Mercado Pago',
-      query: 'from:mercadopago.com subject:(transferencia OR transferiste OR recibiste OR enviaste OR pagaste OR "te enviaron" OR "dinero")',
+      query: 'from:(mercadopago OR mercadolibre) (transferencia OR transferiste OR recibiste OR enviaste OR enviamos OR pagaste OR "te enviaron" OR dinero)',
     },
   ],
 };
@@ -259,11 +262,17 @@ function interpretarTexto(texto, asunto) {
   }
 
   const esIngreso = /(recibiste|te (transfiri[oó]|envi[oó]|deposit[oó])|has recibido|transferencia recibida|ingreso de dinero|te lleg[oó]|dep[oó]sito recibido)/i.test(t);
-  const esGasto = /(transferiste|enviaste|has (transferido|enviado|realizado)|transferencia (realizada|enviada|a terceros|exitosa|de fondos)|pagaste|compra|cargo|realizaste|pago (realizado|aprobado|exitoso)|giro)/i.test(t);
+  const esGasto = /(transferiste|enviaste|has (transferido|enviado|realizado)|transferencia (realizada|enviada|a terceros|exitosa|de fondos)|pagaste|compra|cargo|realizaste|pago (realizado|aprobado|exitoso)|giro|enviamos tu transferencia|tu transferencia (fue|ha sido) enviada)/i.test(t);
   if (!esIngreso && !esGasto) return null;
   const tipo = esIngreso && !/(transferiste|enviaste|pagaste)/i.test(t) ? 'ingreso' : 'gasto';
 
-  const r = { monto: monto, tipo: tipo, descripcion: extraerContraparte_(t, tipo) || limpiar_(asunto) || 'Movimiento' };
+  const contraparte = extraerContraparte_(t, tipo);
+  const r = { monto: monto, tipo: tipo, descripcion: contraparte || limpiar_(asunto) || 'Movimiento' };
+  // Si la otra persona eres tú mismo, es un traspaso entre tus cuentas.
+  if (contraparte && esMiNombre_(contraparte, miNombre_())) {
+    r.tipo = 'traspaso';
+    r.descripcion = tipo === 'gasto' ? 'Traspaso a cuenta propia' : 'Traspaso desde cuenta propia';
+  }
   if (fecha) r.fecha = fecha;
   return r;
 }
@@ -287,6 +296,7 @@ function interpretarSantander_(t, lineas) {
     const nombreDestino = limpiar_(valorDe(iDestino, lineas.length, /^nombre$/i));
     const yo = (t.match(/Estimad[oa]\s*\(?\s*a?\s*\)?\s*([^:,\n]+)/i) || [])[1] || '';
     const origenSoyYo = esMiNombre_(nombreOrigen, yo);
+    if (origenSoyYo) recordarMiNombre_(nombreOrigen);
     const destinoSoyYo = esMiNombre_(nombreDestino, yo);
     if (origenSoyYo && destinoSoyYo) return { tipo: 'traspaso', descripcion: 'Traspaso a ' + (valorDe(iDestino, lineas.length, /^banco$/i) || 'cuenta propia') };
     if (destinoSoyYo) return { tipo: 'ingreso', descripcion: nombreOrigen || 'Transferencia recibida' };
@@ -304,6 +314,16 @@ function interpretarSantander_(t, lineas) {
     return { tipo: 'gasto', descripcion: limpiar_(empresa) || 'Pago de cuentas' };
   }
   return null;
+}
+
+function miNombre_() {
+  return CONFIG.MI_NOMBRE || PropertiesService.getScriptProperties().getProperty('MI_NOMBRE') || '';
+}
+
+function recordarMiNombre_(nombre) {
+  if (CONFIG.MI_NOMBRE || !nombre) return;
+  const props = PropertiesService.getScriptProperties();
+  if (!props.getProperty('MI_NOMBRE')) props.setProperty('MI_NOMBRE', nombre);
 }
 
 /** ¿El nombre corresponde a quien recibe el correo ("Estimado(a) ...")? */
@@ -334,12 +354,12 @@ function extraerMonto_(t) {
 function extraerContraparte_(t, tipo) {
   const patrones = tipo === 'gasto'
     ? [
-        /(?:nombre del destinatario|destinatario|nombre beneficiario|beneficiario|para)\s*:\s*([^\n\r]{2,60})/i,
+        /(?:nombre del destinatario|nombre y apellido|destinatario|nombre beneficiario|beneficiario|para)\s*:\s*([^\n\r]{2,60})/i,
         /(?:pagaste|compraste|compra|cargo|transferiste|enviaste)[^\n]*?\s(?:a|en)\s+([A-ZÁÉÍÓÚÑa-záéíóúñ0-9][^\n\r.,$]{1,50}?)(?=\s+con\s|\s+el\s+d[ií]a|\s+por\s|[.,\n\r]|$)/i,
         /(?:comercio|establecimiento)\s*:?\s*([^\n\r]{2,60})/i,
       ]
     : [
-        /(?:nombre del (?:origen|remitente|ordenante)|remitente|origen|de parte de)\s*:\s*([^\n\r]{2,60})/i,
+        /(?:nombre del (?:origen|remitente|ordenante)|nombre y apellido|remitente|origen|de parte de)\s*:\s*([^\n\r]{2,60})/i,
         /([A-ZÁÉÍÓÚÑ][^\n\r.,$]{1,50}?)\s+te (?:transfiri[oó]|envi[oó]|deposit[oó])/i,
         /recibiste[^\n]*?\sde\s+([A-ZÁÉÍÓÚÑa-záéíóúñ][^\n\r.,$]{1,50})/i,
       ];
