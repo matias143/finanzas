@@ -113,7 +113,7 @@ function doGet() {
 
 function doPost(e) {
   try {
-    const datos = JSON.parse((e && e.postData && e.postData.contents) || '{}');
+    const datos = leerCuerpo_((e && e.postData && e.postData.contents) || '{}');
     const token = PropertiesService.getScriptProperties().getProperty('TOKEN');
     if (!token || datos.token !== token) return respuesta_({ error: 'Clave incorrecta' });
 
@@ -130,6 +130,25 @@ function doPost(e) {
   } catch (err) {
     return respuesta_({ error: String(err && err.message || err) });
   }
+}
+
+/**
+ * Lee el JSON recibido. MacroDroid pega el texto de la notificación tal cual, así que puede traer
+ * saltos de línea o comillas que rompen el JSON; en ese caso se rescatan los campos uno por uno.
+ */
+function leerCuerpo_(texto) {
+  try { return JSON.parse(texto); } catch (e) { /* sigue */ }
+  try { return JSON.parse(texto.replace(/\r?\n/g, '\\n').replace(/\t/g, ' ')); } catch (e) { /* sigue */ }
+  const campos = ['token', 'accion', 'app', 'titulo', 'texto'];
+  const out = {};
+  campos.forEach(function (c, i) {
+    const sig = campos[i + 1];
+    const re = new RegExp('"' + c + '"\\s*:\\s*"([\\s\\S]*?)"\\s*' + (sig ? ',\\s*"' + sig + '"' : '}\\s*$'));
+    const m = texto.match(re);
+    if (m) out[c] = m[1];
+  });
+  if (!out.token) throw new Error('Cuerpo inválido');
+  return out;
 }
 
 function respuesta_(obj) {
