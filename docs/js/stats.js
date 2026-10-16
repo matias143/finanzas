@@ -118,6 +118,27 @@ export function recurrentes(movs, ym) {
   return out.sort((a, b) => b.monto - a.monto);
 }
 
+// Ahorro: traspasos hacia tu cuenta de ahorro (ej. "Traspaso a Banco Estado").
+// Los traspasos que vuelven desde esa cuenta (descripción con "desde", ej. "Traspaso desde Banco Estado") se restan.
+export function ahorro(movs, ym, patron) {
+  let re;
+  try { re = new RegExp(patron || 'estado|ahorro', 'i'); } catch { return { mes: 0, total: 0, meses: [] }; }
+  const signo = (m) => {
+    if (m.tipo !== 'traspaso') return 0;
+    const t = normalizar(`${m.descripcion} ${m.cuenta}`);
+    if (!re.test(t)) return 0;
+    return /\bdesde\b/.test(normalizar(m.descripcion)) ? -1 : 1;
+  };
+  let mes = 0, total = 0;
+  for (const m of movs) {
+    const s = signo(m);
+    if (!s || !m.fecha) continue;
+    if (m.fecha.slice(0, 7) <= ym) total += s * m.monto;
+    if (m.fecha.startsWith(ym)) mes += s * m.monto;
+  }
+  return { mes, total };
+}
+
 // Avance de cada presupuesto del mes.
 export function presupuestos(movs, ym, categorias) {
   const gastado = new Map(porCategoria(gastos(delMes(movs, ym))).map((c) => [c.categoria, c.monto]));

@@ -1,6 +1,6 @@
 // Interfaz de la app: vistas, editor de movimientos y ajustes.
 import { store, CONFIG_DEFAULT } from './store.js';
-import { resumenMes, serieMeses, acumuladoDiario, hormiga, recurrentes, presupuestos } from './stats.js';
+import { resumenMes, serieMeses, acumuladoDiario, hormiga, recurrentes, presupuestos, ahorro } from './stats.js';
 import { donaCategorias, barrasMeses, lineaAcumulado, destruirTodos } from './charts.js';
 import {
   fmtCLP, fmtPct, hoy, mesActual, sumarMes, nombreMes, fechaLarga, esc, categorizar, sumar, normalizar,
@@ -40,6 +40,7 @@ function vistaInicio() {
   const hor = hormiga(movs, ui.mes, store.state.config.umbralHormiga);
   const rec = recurrentes(movs, ui.mes);
   const ppto = presupuestos(movs, ui.mes, store.state.config.categorias).filter((p) => p.limite && p.pct >= 0.8);
+  const aho = ahorro(movs, ui.mes, store.state.config.patronAhorro);
   const variacionTxt = r.variacion == null ? 'sin datos del mes anterior'
     : `${r.variacion > 0 ? '▲' : '▼'} ${fmtPct(Math.abs(r.variacion))} vs ${nombreMes(sumarMes(ui.mes, -1), true)}${r.esMesActual ? ' a esta fecha' : ''}`;
 
@@ -59,6 +60,12 @@ function vistaInicio() {
       <div class="kpi"><div class="t">${r.esMesActual ? 'Proyección a fin de mes' : 'Gasto total'}</div><div class="v num">${fmtCLP(r.proyeccion)}</div><div class="s">${esc(variacionTxt)}</div></div>
       <div class="kpi"><div class="t">Gastos hormiga</div><div class="v num">${fmtCLP(hor.total)}</div><div class="s">${hor.cantidad} compras ≤ ${fmtCLP(store.state.config.umbralHormiga)}</div></div>
     </section>
+
+    ${aho.total || aho.mes ? `<section class="tarjeta ahorro">
+      <div><div class="t">Ahorro este mes</div><div class="v num positivo">${fmtCLP(aho.mes)}</div>
+        <div class="s">${r.ingresos ? fmtPct(aho.mes / r.ingresos) + ' de tus ingresos' : 'traspasos a tu cuenta de ahorro'}</div></div>
+      <div><div class="t">Ahorro acumulado</div><div class="v num">${fmtCLP(aho.total)}</div><div class="s">total traspasado</div></div>
+    </section>` : ''}
 
     ${ppto.length ? `<section class="tarjeta"><h2>Presupuestos en alerta</h2>
       ${ppto.map((p) => barraPpto(p)).join('')}</section>` : ''}
@@ -232,6 +239,7 @@ function vistaAjustes() {
       <h2>Preferencias</h2>
       <label class="campo"><span>Cuentas (separadas por coma)</span><input id="pref-cuentas" value="${esc(c.cuentas.join(', '))}"></label>
       <label class="campo"><span>Umbral de gasto hormiga</span><input id="pref-hormiga" inputmode="numeric" value="${c.umbralHormiga}"></label>
+      <label class="campo"><span>Cuenta de ahorro (los traspasos que la mencionen cuentan como ahorro)</span><input id="pref-ahorro" value="${esc(c.patronAhorro || '')}" placeholder="estado|ahorro"></label>
       <button class="btn chico primario" id="pref-guardar">Guardar preferencias</button>
     </section>
 
@@ -287,7 +295,7 @@ function vistaAjustes() {
 
       $('#pref-guardar').addEventListener('click', async () => {
         const cuentas = $('#pref-cuentas').value.split(',').map((x) => x.trim()).filter(Boolean);
-        await store.guardarConfig({ cuentas: cuentas.length ? cuentas : CONFIG_DEFAULT.cuentas, umbralHormiga: Number($('#pref-hormiga').value.replace(/\D/g, '')) || 5000 });
+        await store.guardarConfig({ cuentas: cuentas.length ? cuentas : CONFIG_DEFAULT.cuentas, umbralHormiga: Number($('#pref-hormiga').value.replace(/\D/g, '')) || 5000, patronAhorro: normalizarPatron($('#pref-ahorro').value) || 'estado|ahorro' });
         aviso('Preferencias guardadas');
       });
 

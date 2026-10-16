@@ -2,8 +2,10 @@
 import { uid } from './util.js';
 
 export const CONFIG_DEFAULT = {
-  cuentas: ['Santander', 'Mercado Pago', 'Efectivo'],
+  cuentas: ['Santander', 'Mercado Pago', 'BancoEstado (ahorro)', 'Efectivo'],
   umbralHormiga: 5000,
+  // Traspasos cuya descripción calce con esto cuentan como ahorro (ej. "Traspaso a Banco Estado").
+  patronAhorro: 'estado|ahorro',
   categorias: [
     { nombre: 'Supermercado', tipo: 'gasto', color: '#2f9e6e', presupuesto: 0 },
     { nombre: 'Comida y delivery', tipo: 'gasto', color: '#e8833a', presupuesto: 0 },
