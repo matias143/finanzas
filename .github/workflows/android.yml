@@ -1,0 +1,37 @@
+# Compila la app Android "Finanzas Notif" y la publica en Releases con un enlace fijo:
+# https://github.com/matias143/finanzas/releases/latest/download/finanzas-notif.apk
+name: App Android
+
+on:
+  push:
+    branches: [main]
+    paths: ['android/**', '.github/workflows/android.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: android
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - run: gradle --no-daemon assembleRelease
+      - run: cp app/build/outputs/apk/release/app-release.apk finanzas-notif.apk
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: android-v${{ github.run_number }}
+          name: Finanzas Notif ${{ github.run_number }}
+          body: App Android que envía las notificaciones del banco a tu planilla. Descárgala desde el celular e instálala encima de la anterior.
+          files: android/finanzas-notif.apk
+          make_latest: true
