@@ -9,7 +9,7 @@ App personal de finanzas para Android. Se instala desde el navegador como una ap
 | La app (React + shadcn/ui) | GitHub Pages, compilada por GitHub Actions | Gratis (repo público) |
 | Tus datos | Una Google Sheet privada en tu Drive | Gratis |
 | El "backend" (sincronización y lectura de correos) | Google Apps Script en tu cuenta | Gratis |
-| Compras con tarjeta (opcional) | MacroDroid en tu celular | Gratis (usa 1 de 5 macros) |
+| Compras con tarjeta | App Android propia (Finanzas Notif) | Gratis, sin anuncios |
 
 > El repositorio es público, pero **solo contiene código**. Tus movimientos están en tu Google Sheet y la clave solo vive en tu celular. Nunca subas la clave ni datos al repo.
 
@@ -73,21 +73,19 @@ Cada 15 minutos, el script revisa tu Gmail en busca de correos de **Santander** 
 
 ### Compras con tarjeta (notificaciones del celular)
 
-Como Santander no te envía correo por las compras con tarjeta, se usan las **notificaciones push** de las apps de Santander y Mercado Pago. MacroDroid (gratis) las reenvía a tu script:
+Santander no manda correo por compras con tarjeta ni por transferencias recibidas, pero sí una notificación push. La app Android **Finanzas Notif** (carpeta `android/`) lee esas notificaciones y las envía a tu planilla. Es gratis, sin anuncios ni límites.
 
-1. En las apps de Santander y Mercado Pago, activa las notificaciones de compras o movimientos si están disponibles.
-2. Instala **MacroDroid** desde Play Store y crea una macro:
-   - **Disparador**: *Notificación* → *Notificación recibida* → selecciona las apps **Santander** y **Mercado Pago**.
-   - **Acción**: *Conectividad* → *Solicitud HTTP*:
-     - Método: **POST**
-     - URL: tu URL `/exec`
-     - Cuerpo, tipo `text/plain`. Usa el botón de texto mágico para insertar las variables:
-       ```json
-       {"token":"TU_CLAVE","accion":"notif","app":"[app_name]","titulo":"[notification_title]","texto":"[notification]"}
-       ```
-3. Dale a MacroDroid acceso a notificaciones y quítale la optimización de batería.
+1. Desde el celular descarga e instala: **https://github.com/matias143/finanzas/releases/latest/download/finanzas-notif.apk**. Android pedirá permitir "instalar apps de origen desconocido" para Chrome; acéptalo.
+2. Abre **Finanzas Notif**, pega la **URL** `/exec` y la **clave**, y toca **Guardar y probar conexión**. Debe decir "Conexión correcta ✓".
+3. Toca **Dar acceso a notificaciones** y activa Finanzas Notif.
+4. Toca **Que la batería no la detenga** y acepta.
 
-Las notificaciones repetidas se descartan solas. Las que no son de dinero (promociones, por ejemplo) quedan en "Sin leer" y no ensucian tus datos.
+Solo escucha las apps cuyo nombre calce con el filtro (por defecto `santander|mercado ?pago`). Si no hay internet, guarda la notificación y la envía cuando vuelva la conexión. En la pantalla de la app ves las últimas notificaciones y si se enviaron. En tu planilla, la pestaña **Registro** muestra qué hizo el script con cada una.
+
+- Las compras con tarjeta se guardan como gasto, con el comercio limpio ("TUU*EL GRAN POLLO  PUERTO MONTT CL" → "El Gran Pollo").
+- Las transferencias **recibidas** se guardan como ingreso. Las que **tú haces** se ignoran aquí, porque ya llegan por correo con más detalle.
+
+Cada vez que cambias algo en `android/`, GitHub compila una versión nueva y la publica en el mismo enlace. Se instala encima de la anterior sin perder la configuración.
 
 ### Importar desde Excel o CSV (Wallet, cartolas)
 
@@ -147,8 +145,10 @@ web/                          ← la app (React + TypeScript + Tailwind + shadcn
   public/                     ← íconos, manifest y sw.js (funcionamiento sin internet)
 apps-script/
   Code.gs                     ← backend: API, lectura de correos y notificaciones
+android/                      ← app Finanzas Notif (Kotlin): lee notificaciones del banco
   appsscript.json
-.github/workflows/publicar.yml ← compila y publica la app en cada push
+.github/workflows/publicar.yml ← compila y publica la app web en cada push
+.github/workflows/android.yml  ← compila el APK y lo publica en Releases
 ```
 
 ## Seguridad y respaldo
