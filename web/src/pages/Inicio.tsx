@@ -1,4 +1,4 @@
-import { ArrowDownRight, ArrowUpRight, PiggyBank, Repeat } from 'lucide-react'
+import { ArrowDownRight, ArrowUpRight, CalendarDays, PiggyBank, Repeat } from 'lucide-react'
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Progress } from '@/components/ui/progress'
@@ -6,7 +6,7 @@ import { BarrasMeses, DonaCategorias, LineaAcumulado } from '@/components/charts
 import { useStore } from '@/lib/store'
 import { useUI } from '@/lib/ui'
 import { colorDe } from '@/lib/colores'
-import { acumuladoDiario, ahorro, hormiga, presupuestos, recurrentes, resumenMes, serieMeses } from '@/lib/stats'
+import { acumuladoDiario, ahorro, compararConAnterior, hormiga, presupuestos, recurrentes, resumenMes, serieMeses } from '@/lib/stats'
 import { fmtCLP, fmtPct, hoy, nombreMes, sumar, sumarMes } from '@/lib/util'
 import { cn } from '@/lib/utils'
 
@@ -41,6 +41,130 @@ export function BarraPresupuesto({ p }: { p: ReturnType<typeof presupuestos>[num
   )
 }
 
+/** "▲ 12% más" en rojo (gastaste más) o "▼ 8% menos" en verde (gastaste menos). */
+function Variacion({ v, className }: { v: number | null; className?: string }) {
+  if (v == null) return <span className={cn('text-muted-foreground', className)}>sin datos</span>
+  if (Math.round(v * 100) === 0) return <span className={cn('text-muted-foreground', className)}>igual</span>
+  return (
+    <span className={cn('num font-semibold', v > 0 ? 'text-expense' : 'text-income', className)}>
+      {v > 0 ? '▲' : '▼'} {fmtPct(Math.abs(v))} {v > 0 ? 'más' : 'menos'}
+    </span>
+  )
+}
+
+function DosBarras({ filas }: { filas: { etiqueta: string; valor: number; color: string }[] }) {
+  const max = Math.max(...filas.map((f) => f.valor), 1)
+  return (
+    <div className="space-y-1.5">
+      {filas.map((f) => (
+        <div key={f.etiqueta} className="grid grid-cols-[4.5rem_1fr_auto] items-center gap-2 text-xs">
+          <span className="text-muted-foreground truncate capitalize">{f.etiqueta}</span>
+          <div className="bg-muted h-2 overflow-hidden rounded-full">
+            <div className="h-full rounded-full" style={{ width: `${(f.valor / max) * 100}%`, background: f.color }} />
+          </div>
+          <span className="num w-20 text-right">{fmtCLP(f.valor)}</span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function Comparacion({ mes, proyeccion }: { mes: string; proyeccion: number }) {
+  const store = useStore()
+  const c = compararConAnterior(store.movimientos(), mes, hoy())
+  if (!c.hayDatosAnteriores) return null
+  const este = nombreMes(mes, true)
+  const ant = nombreMes(c.anteriorYm, true)
+  const antLargo = nombreMes(c.anteriorYm).split(' ')[0].toLowerCase()
+  const varProy = c.anteriorTotal > 0 ? (proyeccion - c.anteriorTotal) / c.anteriorTotal : null
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-1.5 text-sm">
+          <CalendarDays className="size-4" /> Comparado con {antLargo}
+        </CardTitle>
+        <CardDescription>Cuánto has gastado contra el mes anterior</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-5">
+        {c.esMesActual && (
+          <section className="space-y-2">
+            <div className="flex items-baseline justify-between gap-2">
+              <span className="text-sm font-medium">Al día {c.dia}</span>
+              <Variacion v={c.varAFecha} className="text-sm" />
+            </div>
+            <DosBarras
+              filas={[
+                { etiqueta: este, valor: c.actualAFecha, color: 'var(--primary)' },
+                { etiqueta: `${ant} 1–${c.dia}`, valor: c.anteriorAFecha, color: 'var(--muted-foreground)' },
+              ]}
+            />
+            <p className="text-muted-foreground text-xs">
+              Del 1 al {c.dia} de cada mes:{' '}
+              {c.actualAFecha >= c.anteriorAFecha ? `${fmtCLP(c.actualAFecha - c.anteriorAFecha)} más` : `${fmtCLP(c.anteriorAFecha - c.actualAFecha)} menos`} que
+              en {antLargo} a la misma fecha.
+            </p>
+          </section>
+        )}
+
+        <section className="space-y-2">
+          <div className="flex items-baseline justify-between gap-2">
+            <span className="text-sm font-medium">
+              Mes completo {c.esMesActual && <span className="text-muted-foreground text-xs font-normal">· proyectado</span>}
+            </span>
+            <Variacion v={c.esMesActual ? varProy : c.varTotal} className="text-sm" />
+          </div>
+          {c.esMesActual ? (
+            <>
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-muted-foreground">
+                  Llevas el <b className="text-foreground num">{fmtPct(c.actualTotal / c.anteriorTotal)}</b> de lo que gastaste en {antLargo}
+                </span>
+              </div>
+              <Progress
+                value={(c.actualTotal / c.anteriorTotal) * 100}
+                className="bg-muted"
+                indicatorStyle={{ background: c.actualTotal > c.anteriorTotal ? 'var(--expense)' : 'var(--primary)' }}
+              />
+              <p className="text-muted-foreground num text-xs">
+                {antLargo.charAt(0).toUpperCase() + antLargo.slice(1)} cerró en {fmtCLP(c.anteriorTotal)} · a este ritmo cerrarías en {fmtCLP(proyeccion)}
+              </p>
+            </>
+          ) : (
+            <DosBarras
+              filas={[
+                { etiqueta: este, valor: c.actualTotal, color: 'var(--primary)' },
+                { etiqueta: ant, valor: c.anteriorTotal, color: 'var(--muted-foreground)' },
+              ]}
+            />
+          )}
+        </section>
+
+        {c.categorias.length > 0 && (
+          <section>
+            <div className="mb-1 text-sm font-medium">Dónde cambió más {c.esMesActual && <span className="text-muted-foreground text-xs font-normal">· a esta fecha</span>}</div>
+            <ul className="divide-y">
+              {c.categorias.map((x) => (
+                <li key={x.categoria} className="flex items-center gap-2.5 py-2 text-sm">
+                  <span className="size-2.5 shrink-0 rounded-[3px]" style={{ background: colorDe(x.categoria) }} />
+                  <span className="min-w-0 flex-1 truncate">{x.categoria}</span>
+                  <span className={cn('num', x.diferencia > 0 ? 'text-expense' : 'text-income')}>
+                    {x.diferencia > 0 ? '+' : '-'}
+                    {fmtCLP(Math.abs(x.diferencia))}
+                  </span>
+                  <span className="num text-muted-foreground w-16 text-right text-xs">
+                    {x.variacion == null ? 'nuevo' : `${x.variacion > 0 ? '▲' : '▼'} ${fmtPct(Math.abs(x.variacion))}`}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
 export function Inicio() {
   const store = useStore()
   const { mes } = useUI()
@@ -70,15 +194,6 @@ export function Inicio() {
   const rec = recurrentes(movs, mes)
   const alertas = presupuestos(movs, mes, cfg.categorias).filter((p) => p.limite && (p.pct ?? 0) >= 0.8)
   const aho = ahorro(movs, mes, cfg.patronAhorro)
-  const variacion =
-    r.variacion == null ? (
-      'sin datos del mes anterior'
-    ) : (
-      <span className={r.variacion > 0 ? 'text-expense' : 'text-income'}>
-        {r.variacion > 0 ? '▲' : '▼'} {fmtPct(Math.abs(r.variacion))} vs {nombreMes(sumarMes(mes, -1), true)}
-        {r.esMesActual ? ' a esta fecha' : ''}
-      </span>
-    )
 
   return (
     <div className="space-y-3">
@@ -106,9 +221,15 @@ export function Inicio() {
       <div className="grid grid-cols-2 gap-3">
         <Kpi titulo="Tasa de ahorro" valor={fmtPct(r.tasaAhorro)} detalle="del ingreso del mes" />
         <Kpi titulo="Gasto diario" valor={fmtCLP(r.promDiario)} detalle="promedio" />
-        <Kpi titulo={r.esMesActual ? 'Proyección a fin de mes' : 'Gasto total'} valor={fmtCLP(r.proyeccion)} detalle={variacion} />
+        <Kpi
+          titulo={r.esMesActual ? 'Proyección a fin de mes' : 'Gasto total'}
+          valor={fmtCLP(r.proyeccion)}
+          detalle={r.esMesActual ? 'estimado de gasto al cierre' : 'gastos del mes'}
+        />
         <Kpi titulo="Gastos hormiga" valor={fmtCLP(hor.total)} detalle={`${hor.cantidad} compras ≤ ${fmtCLP(cfg.umbralHormiga)}`} />
       </div>
+
+      <Comparacion mes={mes} proyeccion={r.proyeccion} />
 
       {(aho.total !== 0 || aho.mes !== 0) && (
         <Card className="border-primary/20 bg-primary/10 gap-0 py-3.5">

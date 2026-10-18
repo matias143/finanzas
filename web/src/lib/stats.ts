@@ -165,3 +165,55 @@ export function presupuestos(movs: Movimiento[], ym: string, categorias: Categor
       return { categoria: c.nombre, color: c.color, gastado: g, limite, pct: limite ? g / limite : null }
     })
 }
+
+/**
+ * Comparación de gastos con el mes anterior:
+ *  - aFecha: del día 1 al día de hoy, en ambos meses (comparación justa a mitad de mes)
+ *  - completo: total de este mes contra el total del mes anterior
+ *  - categorias: categorías que más cambiaron (a la fecha en el mes en curso; mes completo en meses pasados)
+ */
+export function compararConAnterior(movs: Movimiento[], ym: string, hoyStr: string) {
+  const anteriorYm = sumarMes(ym, -1)
+  const esMesActual = hoyStr.startsWith(ym)
+  const dia = esMesActual ? Number(hoyStr.slice(8, 10)) : diasEnMes(ym)
+  const hasta = (l: Movimiento[], d: number) => l.filter((m) => Number(m.fecha.slice(8, 10)) <= d)
+  const variacion = (a: number, b: number) => (b > 0 ? (a - b) / b : null)
+
+  const actual = gastos(delMes(movs, ym))
+  const anterior = gastos(delMes(movs, anteriorYm))
+  const actualAFecha = sumar(hasta(actual, dia))
+  const anteriorAFecha = sumar(hasta(anterior, dia))
+  const actualTotal = sumar(actual)
+  const anteriorTotal = sumar(anterior)
+
+  const base = esMesActual ? hasta(actual, dia) : actual
+  const baseAnt = esMesActual ? hasta(anterior, dia) : anterior
+  const porCat = new Map<string, { actual: number; anterior: number }>()
+  for (const [lista, k] of [[base, 'actual'], [baseAnt, 'anterior']] as const) {
+    for (const m of lista) {
+      const c = m.categoria || 'Sin categoría'
+      const x = porCat.get(c) || { actual: 0, anterior: 0 }
+      x[k] += m.monto
+      porCat.set(c, x)
+    }
+  }
+  const categorias = [...porCat.entries()]
+    .map(([categoria, v]) => ({ categoria, ...v, diferencia: v.actual - v.anterior, variacion: variacion(v.actual, v.anterior) }))
+    .filter((c) => c.diferencia !== 0)
+    .sort((a, b) => Math.abs(b.diferencia) - Math.abs(a.diferencia))
+    .slice(0, 4)
+
+  return {
+    anteriorYm,
+    esMesActual,
+    dia,
+    hayDatosAnteriores: anterior.length > 0,
+    actualAFecha,
+    anteriorAFecha,
+    varAFecha: variacion(actualAFecha, anteriorAFecha),
+    actualTotal,
+    anteriorTotal,
+    varTotal: variacion(actualTotal, anteriorTotal),
+    categorias,
+  }
+}
