@@ -38,6 +38,7 @@ const COLUMNAS = ['id', 'fecha', 'monto', 'tipo', 'categoria', 'descripcion', 'c
 const HOJA_MOVS = 'Movimientos';
 const HOJA_CONFIG = 'Config';
 const HOJA_PENDIENTES = 'Sin leer';
+const HOJA_REGISTRO = 'Registro';
 
 // ============ Instalación ============
 
@@ -270,8 +271,17 @@ function interpretarTexto(texto, asunto) {
   const monto = extraerMonto_(t);
   if (!monto) return null;
 
-  // Formatos conocidos de Santander (comprobantes) primero.
   const fecha = extraerFecha_(t);
+
+  // Notificaciones push de Santander (compras con tarjeta y transferencias recibidas).
+  const push = interpretarPushSantander_(crudo);
+  if (push) {
+    push.monto = monto;
+    if (fecha) push.fecha = fecha;
+    return push;
+  }
+
+  // Formatos conocidos de Santander (comprobantes por correo).
   const santander = interpretarSantander_(t);
   if (santander) {
     santander.monto = monto;
@@ -293,6 +303,33 @@ function interpretarTexto(texto, asunto) {
   }
   if (fecha) r.fecha = fecha;
   return r;
+}
+
+/**
+ * Notificaciones push de la app Santander. Ejemplos:
+ *  "El 18-10-2026 14:38 se realizó una compra con tu Tarjeta de Débito terminada en 4230 en TUU*EL GRAN POLLO   PUERTO MONTT  CL por $16.100."
+ *  "El 18-10-2026 17:39:49 se realizó una Transferencia hacia tu cuenta 000084898180 por $ 8.000. Saludos"
+ */
+function interpretarPushSantander_(crudo) {
+  const t = String(crudo).replace(/-\s*\n\s*/g, '').replace(/\n/g, ' ');
+  const compra = t.match(/(?:compra|cargo|pago)\s+con\s+tu\s+tarjeta\s+de\s+(d[eé]bito|cr[eé]dito)[^$]*?terminada\s+en\s+\d+\s+en\s+(.+?)\s+por\s+\$/i);
+  if (compra) return { tipo: 'gasto', descripcion: limpiarComercio_(compra[2]) || 'Compra con tarjeta' };
+  if (/transferencia\s+hacia\s+tu\s+cuenta|abono\s+en\s+tu\s+cuenta|transferencia\s+recibida/i.test(t)) {
+    const de = t.match(/\bde\s+([A-ZÁÉÍÓÚÑ][^$.\d]{2,50}?)\s+(?:por|hacia|a tu)/);
+    return { tipo: 'ingreso', descripcion: de ? limpiar_(de[1]) : 'Transferencia recibida' };
+  }
+  return null;
+}
+
+/** "TUU*EL GRAN POLLO      PUERTO MONTT  CL" → "El Gran Pollo" */
+function limpiarComercio_(s) {
+  let x = String(s || '').split(/\s{2,}/)[0];                  // el nombre viene antes de la ciudad
+  x = x.replace(/^(tuu|merpago|mercadopago|mp|sumup|payu|flow|getnet|klap|transbank|webpay|dlocal|paypal)\s*\*\s*/i, '');
+  x = x.replace(/\s+(cl|chl|chile)$/i, '').trim();
+  if (!x) return '';
+  // MAYÚSCULAS → "Tipo Título"
+  if (x === x.toUpperCase()) x = x.toLowerCase().replace(/(^|[\s*\-./])([a-záéíóúñ])/g, function (m, a, b) { return a + b.toUpperCase(); });
+  return limpiar_(x);
 }
 
 /**
@@ -374,7 +411,7 @@ function esMiNombre_(nombre, estimado) {
 
 /** Fecha escrita en el correo ("realizada el 13/10/2026", "con fecha 09-09-2026") → "2026-10-13". */
 function extraerFecha_(t) {
-  const m = t.match(/(?:realizad[ao] el|con fecha|fecha:?)\s*(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})/i);
+  const m = t.match(/(?:realizad[ao] el|con fecha|fecha:?|\bel)\s*(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})/i);
   if (!m) return '';
   return m[3] + '-' + ('0' + m[2]).slice(-2) + '-' + ('0' + m[1]).slice(-2);
 }
@@ -549,29 +586,70 @@ function reprocesarCorreos() {
 
 // ============ Notificaciones del celular (MacroDroid) ============
 
+/** Deja constancia de cada notificación recibida en la pestaña "Registro" (útil para revisar qué llega). */
+function registrar_(ss, datos, resultado, respuesta) {
+  let h = ss.getSheetByName(HOJA_REGISTRO);
+  if (!h) {
+    h = ss.insertSheet(HOJA_REGISTRO);
+    h.appendRow(['recibida', 'app', 'título', 'texto', 'resultado']);
+    h.setFrozenRows(1);
+  }
+  h.insertRowAfter(1);
+  h.getRange(2, 1, 1, 5).setValues([[
+    Utilities.formatDate(new Date(), CONFIG.ZONA, 'yyyy-MM-dd HH:mm:ss'),
+    String(datos.app || ''), String(datos.titulo || ''), String(datos.texto || '').slice(0, 500), resultado,
+  ]]);
+  if (h.getLastRow() > 501) h.deleteRows(502, h.getLastRow() - 501);
+  return respuesta;
+}
+
+/** Para probar sin el celular: muestra qué entiende de dos notificaciones reales de Santander. */
+function probarNotificacion() {
+  const ejemplos = [
+    'El 18-10-2026 14:38 se realizó una compra con tu Tarjeta de Débito terminada en 4230 en TUU*EL GRAN POLLO      PUERTO MONTT  CL por $16.100.',
+    'El 18-10-2026 17:39:49 se realizó una Transferencia hacia tu cuenta 000084898180 por $ 8.000. Saludos',
+  ];
+  ejemplos.forEach(function (e) { Logger.log(e + '\n→ ' + JSON.stringify(interpretarTexto(e, 'Santander'))); });
+}
+
 function registrarNotificacion_(datos) {
   const ss = libro_();
   const texto = [datos.titulo, datos.texto].filter(Boolean).join('\n');
   const app = String(datos.app || 'Celular');
   const cuenta = /mercado/i.test(app) ? 'Mercado Pago' : /santander/i.test(app) ? 'Santander' : app;
 
-  const digest = Utilities.computeDigest(Utilities.DigestAlgorithm.MD5, app + '|' + texto + '|' + Utilities.formatDate(new Date(), CONFIG.ZONA, 'yyyyMMddHHmm'));
+  // Id estable para no guardar dos veces la misma notificación (Android a veces la reenvía al actualizarla).
+  // Si el texto trae fecha y hora (Santander) basta con el texto; si no, se agrega el minuto en que llegó.
+  const cuerpo = String(datos.texto || '').replace(/\s+/g, ' ').trim();
+  const conHora = /\d{1,2}[-/]\d{1,2}[-/]\d{2,4}.{0,4}\d{1,2}:\d{2}/.test(cuerpo);
+  const digest = Utilities.computeDigest(Utilities.DigestAlgorithm.MD5, app + '|' + cuerpo + (conHora ? '' : '|' + Utilities.formatDate(new Date(), CONFIG.ZONA, 'yyyyMMddHHmm')));
   const id = 'nt_' + digest.map(function (b) { return ('0' + (b & 0xff).toString(16)).slice(-2); }).join('').slice(0, 16);
 
   const lock = LockService.getScriptLock();
   lock.waitLock(20000);
   try {
-    if (idExiste_(ss, id)) return { ok: true, duplicado: true };
-    // Las transferencias ya llegan por correo (con más detalle); se ignoran aquí para no duplicarlas.
-    if (/transfer/i.test(texto)) return { ok: true, guardado: false, motivo: 'transferencia (se toma del correo)' };
+    if (idExiste_(ss, id)) return registrar_(ss, datos, 'duplicada (ya recibida)', { ok: true, duplicado: true });
+    if (/\[notification|\[app_name|\[not_/i.test(texto)) {
+      return registrar_(ss, datos, 'MacroDroid envió el texto mágico sin reemplazar', { ok: true, guardado: false });
+    }
+    // Las transferencias que TÚ haces ya llegan por correo (con más detalle): se ignoran aquí.
+    // Las que RECIBES no llegan por correo, así que sí se registran.
+    const recibida = /hacia\s+tu\s+cuenta|abono\s+en\s+tu\s+cuenta|recibiste|te\s+(transfiri|envi|deposit)/i.test(texto.replace(/-\s*\n\s*/g, ''));
+    if (/transfer/i.test(texto) && !recibida) {
+      return registrar_(ss, datos, 'transferencia enviada: se toma del correo', { ok: true, guardado: false });
+    }
     const interpretado = interpretarTexto(datos.texto, datos.titulo);
     if (!interpretado) {
       anotarSinLeer_(ss, cuenta + ' (notificación)', datos.titulo || '', datos.texto || '');
-      return { ok: true, guardado: false };
+      return registrar_(ss, datos, 'no se entendió → pestaña "Sin leer"', { ok: true, guardado: false });
     }
     const m = construirMovimiento_(id, interpretado, cuenta, 'notif', new Date(), leerConfig_(ss));
+    const igual = leerMovimientos_(ss).filter(function (x) {
+      return !x.eliminado && x.origen === 'gmail' && x.monto === m.monto && x.fecha === m.fecha;
+    })[0];
+    if (igual) return registrar_(ss, datos, 'ya existía (llegó por correo)', { ok: true, duplicado: true });
     guardarMovimientos_(ss, [m], new Date().toISOString());
-    return { ok: true, guardado: true, movimiento: m };
+    return registrar_(ss, datos, 'guardado: ' + m.tipo + ' ' + m.monto + ' · ' + m.descripcion + ' · ' + m.categoria, { ok: true, guardado: true, movimiento: m });
   } finally {
     lock.releaseLock();
   }
