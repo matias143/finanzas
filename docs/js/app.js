@@ -102,7 +102,14 @@ function vistaInicio() {
   return {
     html,
     despues() {
-      if (r.porCategoria.length) donaCategorias('g-dona', r.porCategoria, colorDe);
+      if (r.porCategoria.length) {
+        const centro = $('.dona-centro');
+        const original = centro.innerHTML;
+        donaCategorias('g-dona', r.porCategoria, colorDe, (c) => {
+          centro.innerHTML = c ? `<b class="num">${fmtCLP(c.monto)}</b><span>${esc(c.categoria)} · ${fmtPct(c.pct)}</span>` : original;
+        });
+        $('.dona-wrap canvas').addEventListener('mouseleave', () => { centro.innerHTML = original; });
+      }
       lineaAcumulado('g-linea', acumuladoDiario(movs, ui.mes, h), acumuladoDiario(movs, sumarMes(ui.mes, -1), h));
       barrasMeses('g-barras', serieMeses(movs, ui.mes, 6));
     },
@@ -450,7 +457,29 @@ function abrirEditor(mov) {
 
 // ================= Importador (vista previa) =================
 
-const PALETA = ['#e05d8a', '#5b8def', '#d98a1b', '#3fb39d', '#9b6bd6', '#c9563c', '#6d9c2e', '#2b9fc2', '#b0703c', '#7a8796'];
+const PALETA = ['#e05d8a', '#5b8def', '#d98a1b', '#3fb39d', '#9b6bd6', '#c9563c', '#6d9c2e', '#2b9fc2', '#e0a458', '#4f6bd8',
+  '#c75fb5', '#58a65c', '#d1495b', '#00a6a6', '#8c6d46', '#a37fe0', '#ef8354', '#2e86ab', '#b8b42d', '#f25f8b'];
+
+/** Un color de la paleta que todavía no use ninguna categoría (o el menos usado). */
+function colorLibre(enUso) {
+  const usados = new Set([...enUso].map((c) => c.toLowerCase()));
+  return PALETA.find((c) => !usados.has(c)) || PALETA[usados.size % PALETA.length];
+}
+
+/** Si dos categorías comparten color, a la segunda se le asigna uno libre. */
+async function repararColores() {
+  const vistos = new Set();
+  let cambio = false;
+  const cats = store.state.config.categorias.map((c) => {
+    const k = (c.color || '').toLowerCase();
+    if (!vistos.has(k)) { vistos.add(k); return c; }
+    const color = colorLibre([...vistos, ...store.state.config.categorias.map((x) => x.color)]);
+    vistos.add(color);
+    cambio = true;
+    return { ...c, color };
+  });
+  if (cambio) await store.guardarConfig({ categorias: cats });
+}
 
 function abrirImportador(nombreArchivo, datos) {
   const cfg = store.state.config;
@@ -520,14 +549,13 @@ function abrirImportador(nombreArchivo, datos) {
     e.preventDefault();
     const mapaCat = {}, mapaCuenta = {};
     const nuevasCats = [];
-    let color = cfg.categorias.length;
     for (const s of $$('[data-mapa-cat]', dlg)) {
       const [tipo] = s.dataset.mapaCat.split('|');
       let cat = s.value;
       if (cat.startsWith('nueva:')) {
         cat = cat.slice(6);
         if (!cfg.categorias.some((c) => c.nombre === cat) && !nuevasCats.some((c) => c.nombre === cat)) {
-          nuevasCats.push({ nombre: cat, tipo, color: PALETA[color++ % PALETA.length], presupuesto: 0 });
+          nuevasCats.push({ nombre: cat, tipo, color: colorLibre([...cfg.categorias, ...nuevasCats].map((c) => c.color)), presupuesto: 0 });
         }
       }
       mapaCat[s.dataset.mapaCat] = cat;
@@ -606,7 +634,8 @@ async function iniciar() {
   setInterval(() => { if (!document.hidden) store.sync(); }, 5 * 60 * 1000);
 
   render();
-  store.sync();
+  await store.sync();
+  repararColores();
 
   // Atajo del ícono (mantener presionado → "Nuevo gasto")
   if (location.hash === '#nuevo') { history.replaceState(null, '', '#inicio'); abrirEditor(); }

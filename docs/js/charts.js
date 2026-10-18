@@ -20,7 +20,14 @@ const tooltipCLP = {
   callbacks: { label: (c) => ` ${c.dataset.label ? c.dataset.label + ': ' : ''}${fmtCLP(c.parsed.y ?? c.parsed)}` },
 };
 
-export function donaCategorias(id, datos, colorDe) {
+// Sin recuadro flotante: al tocar o pasar sobre un trozo, el centro de la dona muestra esa categoría.
+export function donaCategorias(id, datos, colorDe, alSeleccionar) {
+  let actual = -1;
+  const elegir = (i) => {
+    if (i === actual) return;
+    actual = i;
+    alSeleccionar?.(i >= 0 ? datos[i] : null);
+  };
   crear(id, {
     type: 'doughnut',
     data: {
@@ -35,7 +42,10 @@ export function donaCategorias(id, datos, colorDe) {
     options: {
       cutout: '68%',
       maintainAspectRatio: false,
-      plugins: { legend: { display: false }, tooltip: { callbacks: { label: (c) => ` ${c.label}: ${fmtCLP(c.parsed)}` } } },
+      hoverOffset: 6,
+      onHover: (e, els) => elegir(els.length ? els[0].index : -1),
+      onClick: (e, els) => elegir(els.length ? els[0].index : -1),
+      plugins: { legend: { display: false }, tooltip: { enabled: false } },
     },
   });
 }
