@@ -6,7 +6,7 @@ App personal de finanzas para Android. Se instala desde el navegador como una ap
 
 | Pieza | Dónde vive | Costo |
 |---|---|---|
-| La app (este código) | GitHub Pages | Gratis (repo público) |
+| La app (React + shadcn/ui) | GitHub Pages, compilada por GitHub Actions | Gratis (repo público) |
 | Tus datos | Una Google Sheet privada en tu Drive | Gratis |
 | El "backend" (sincronización y lectura de correos) | Google Apps Script en tu cuenta | Gratis |
 | Compras con tarjeta (opcional) | MacroDroid en tu celular | Gratis (usa 1 de 5 macros) |
@@ -45,8 +45,9 @@ App personal de finanzas para Android. Se instala desde el navegador como una ap
 ### 2. Publicar la app con GitHub Pages
 
 1. En este repositorio, ve a **Settings → Pages**.
-2. En *Source* elige **Deploy from a branch**, rama **`main`**, carpeta **`/docs`**, y pulsa **Save**.
-3. En 1 o 2 minutos la app estará en: **https://matias143.github.io/finanzas/**
+2. En *Source* elige **GitHub Actions**.
+3. Ve a la pestaña **Actions → Publicar app → Run workflow** (o simplemente haz un `push`). Cada `push` a `main` que toque `web/` la vuelve a compilar y publicar sola.
+4. En 1 o 2 minutos la app estará en: **https://matias143.github.io/finanzas/**
 
 ### 3. Instalarla en el celular
 
@@ -105,32 +106,49 @@ Si algo no llega por correo ni por notificación, lo agregas con el botón **+**
 
 ## Modificar la app desde cualquier PC
 
+Necesitas [Node.js](https://nodejs.org) 22 o superior (solo la primera vez en cada PC).
+
 ```bash
 git clone https://github.com/matias143/finanzas.git
-cd finanzas
-python3 -m http.server -d docs 8000   # y abre http://localhost:8000
+cd finanzas/web
+npm install        # solo la primera vez
+npm run dev        # abre http://localhost:5173/finanzas/ y se recarga solo al guardar
 ```
 
-Es HTML, CSS y JavaScript sin compilación ni dependencias que actualizar. Edita, haz `git push`, y en 1 o 2 minutos GitHub Pages publica la nueva versión. La app del celular la toma sola la próxima vez que la abras con internet. También puedes editar directo en github.com (tecla `.` abre un editor en el navegador).
+Edita, haz `git push`, y en 1 o 2 minutos GitHub Actions compila y publica la nueva versión. La app del celular la toma sola la próxima vez que la abras con internet. También puedes editar directo en github.com (tecla `.` abre un editor en el navegador): GitHub la compila igual.
+
+Para revisar que compila antes de subir: `npm run build`.
+
+**Componentes shadcn/ui:** están en `web/src/components/ui/` y son código tuyo (puedes modificarlos). Para agregar otros: `npx shadcn@latest add <componente>` dentro de `web/` (por ejemplo `npx shadcn@latest add switch`).
+
+Las versiones de las librerías quedan fijadas en `package-lock.json`, así que nada se rompe solo con el tiempo. Actualizarlas es opcional.
 
 Si cambias `apps-script/Code.gs`, pégalo de nuevo en script.google.com y ve a **Implementar → Gestionar implementaciones → ✏️ → Versión: Nueva versión → Implementar**. La URL no cambia.
 
 ### Estructura
 
 ```
-docs/                 ← la app (lo que publica GitHub Pages)
-  index.html
-  styles.css          ← colores y diseño (variables al inicio)
-  js/app.js           ← pantallas y editor
-  js/stats.js         ← cálculo de KPIs (agrega aquí nuevos indicadores)
-  js/charts.js        ← gráficos (Chart.js)
-  js/store.js         ← guardado local, sincronización y categorías por defecto
-  js/util.js          ← formato de pesos, fechas, reglas
-  sw.js               ← funcionamiento sin internet
-  vendor/             ← Chart.js incluido, sin depender de CDNs
+web/                          ← la app (React + TypeScript + Tailwind + shadcn/ui)
+  src/
+    App.tsx                   ← barra superior, navegación y editor
+    pages/                    ← una pantalla por archivo: Inicio, Movimientos, Presupuesto, Ajustes
+    components/
+      ui/                     ← componentes shadcn/ui (button, card, drawer, select…)
+      charts.tsx              ← gráficos (Recharts)
+      EditorMovimiento.tsx    ← hoja para crear/editar un movimiento
+      Importador.tsx          ← vista previa al importar Excel/CSV
+    lib/
+      stats.ts                ← cálculo de KPIs (agrega aquí nuevos indicadores)
+      store.ts                ← guardado local, sincronización y categorías por defecto
+      importar.ts             ← lectura de Wallet y cartolas
+      util.ts                 ← formato de pesos, fechas, reglas
+      types.ts                ← tipos de datos (Movimiento, Categoria…)
+    index.css                 ← tema: colores de toda la app (claro y oscuro)
+  public/                     ← íconos, manifest y sw.js (funcionamiento sin internet)
 apps-script/
-  Code.gs             ← backend: API, lectura de correos y notificaciones
+  Code.gs                     ← backend: API, lectura de correos y notificaciones
   appsscript.json
+.github/workflows/publicar.yml ← compila y publica la app en cada push
 ```
 
 ## Seguridad y respaldo
