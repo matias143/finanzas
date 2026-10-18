@@ -106,8 +106,11 @@ class MainActivity : Activity() {
     }
 
     private fun pedirBateria() {
+        // Abre la ficha de la app en Ajustes: ahí está "Batería" → "Sin restricciones".
+        // (Se evita el permiso de pedirlo directo, que hace más sospechosa la app para Play Protect.)
         try {
-            startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName")))
+            startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))
+            aviso("Entra a Batería y elige \"Sin restricciones\"")
         } catch (e: Exception) {
             startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
         }
