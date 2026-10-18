@@ -88,6 +88,15 @@ Como Santander no te envía correo por las compras con tarjeta, se usan las **no
 
 Las notificaciones repetidas se descartan solas. Las que no son de dinero (promociones, por ejemplo) quedan en "Sin leer" y no ensucian tus datos.
 
+### Importar desde Excel o CSV (Wallet, cartolas)
+
+En **Ajustes → Importar movimientos** puedes cargar un `.xls`, `.xlsx` o `.csv`:
+
+- **Wallet (BudgetBakers)**: se reconoce solo. Los traspasos entre cuentas, que Wallet anota dos veces, quedan como uno.
+- **Cartolas de banco**: se detectan las columnas de fecha, descripción y monto (o cargo/abono).
+
+Antes de guardar ves una vista previa, donde eliges cómo pasar las categorías y cuentas del archivo a las tuyas. Lo que ya existe en la app (mismo monto, ±2 días) se omite. Si ese movimiento existente tenía una categoría genérica, como "Transferencias", se le completa con la del archivo. Importar dos veces el mismo archivo no duplica nada.
+
 ### Plan B: a mano
 
 Si algo no llega por correo ni por notificación, lo agregas con el botón **+**. Cuando Chile active el open banking oficial (Sistema de Finanzas Abiertas, previsto para julio de 2027), se podrá conectar el banco directamente.

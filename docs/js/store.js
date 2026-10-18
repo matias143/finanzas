@@ -161,7 +161,10 @@ export const store = {
     const ahora = new Date().toISOString();
     for (const d of lista) {
       const m = { ...state.movs[d.id], ...d, actualizado: ahora };
-      if (!m.id) { m.id = uid(); m.creado = ahora; }
+      if (!m.id) m.id = uid();
+      if (!m.creado) m.creado = ahora;
+      m.eliminado = Boolean(m.eliminado);
+      if (m.monto !== undefined) m.monto = Math.round(Math.abs(Number(m.monto)) || 0);
       state.movs[m.id] = m;
       state.pendientes[m.id] = m;
     }

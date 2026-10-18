@@ -4,7 +4,7 @@
 const CACHE = 'finanzas-v1';
 const ARCHIVOS = [
   './', './index.html', './styles.css', './manifest.webmanifest',
-  './js/app.js', './js/store.js', './js/stats.js', './js/charts.js', './js/util.js',
+  './js/app.js', './js/store.js', './js/stats.js', './js/charts.js', './js/util.js', './js/importar.js',
   './vendor/chart.umd.min.js', './icons/icon-192.png', './icons/icon-512.png', './icons/icon.svg',
 ];
 

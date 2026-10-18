@@ -2,6 +2,7 @@
 import { store, CONFIG_DEFAULT } from './store.js';
 import { resumenMes, serieMeses, acumuladoDiario, hormiga, recurrentes, presupuestos, ahorro } from './stats.js';
 import { donaCategorias, barrasMeses, lineaAcumulado, destruirTodos } from './charts.js';
+import { leerArchivo, interpretar, comparar, sugerirCategoria, sugerirCuenta, construir } from './importar.js';
 import {
   fmtCLP, fmtPct, hoy, mesActual, sumarMes, nombreMes, fechaLarga, esc, categorizar, sumar, normalizar,
 } from './util.js';
@@ -163,7 +164,7 @@ function vistaMovimientos() {
 
 function filaMov(m) {
   const signo = m.tipo === 'ingreso' ? '+' : m.tipo === 'gasto' ? '-' : '';
-  const origen = m.origen && m.origen !== 'manual' ? `<span class="etq">${esc({ gmail: 'correo', notif: 'notificación', csv: 'cartola' }[m.origen] || m.origen)}</span>` : '';
+  const origen = m.origen && m.origen !== 'manual' ? `<span class="etq">${esc({ gmail: 'correo', notif: 'notificación', csv: 'cartola', importado: 'importado' }[m.origen] || m.origen)}</span>` : '';
   return `<button class="mov" data-mov="${esc(m.id)}">
     <span class="ic" style="background:${m.tipo === 'traspaso' ? 'var(--texto-3)' : colorDe(m.categoria)}">${esc(inicial(m.descripcion || m.categoria))}</span>
     <span class="cuerpo"><div class="desc">${esc(m.descripcion || m.categoria || 'Sin descripción')}${origen}</div>
@@ -244,10 +245,16 @@ function vistaAjustes() {
     </section>
 
     <section class="tarjeta">
+      <h2>Importar movimientos</h2>
+      <p class="ayuda">Desde un Excel o CSV: exportación de Wallet u otra app, o cartola del banco. Verás una vista previa antes de guardar y no se duplica lo que ya tienes.</p>
+      <label class="btn primario ancho">Elegir archivo Excel / CSV<input id="importar-xls" type="file" accept=".xls,.xlsx,.csv,.txt,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv" hidden></label>
+    </section>
+
+    <section class="tarjeta">
       <h2>Respaldo</h2>
       <p class="ayuda">Descarga todos tus datos en un archivo, o recupéralos desde uno.</p>
       <div class="acciones"><button class="btn" id="exportar">Exportar</button>
-        <label class="btn">Importar<input id="importar" type="file" accept="application/json" hidden></label></div>
+        <label class="btn">Restaurar<input id="importar" type="file" accept="application/json" hidden></label></div>
     </section>
     <p class="ayuda" style="text-align:center">Finanzas · versión 1.0</p>`;
 
@@ -310,6 +317,13 @@ function vistaAjustes() {
         const f = e.target.files[0];
         if (!f) return;
         try { aviso(`${await store.importar(await f.text())} movimientos importados`); } catch (err) { aviso('Error: ' + err.message); }
+      });
+      $('#importar-xls').addEventListener('change', async (e) => {
+        const f = e.target.files[0];
+        e.target.value = '';
+        if (!f) return;
+        aviso('Leyendo archivo…');
+        try { abrirImportador(f.name, interpretar(await leerArchivo(f))); } catch (err) { aviso('Error: ' + err.message); }
       });
     },
   };
@@ -432,6 +446,106 @@ function abrirEditor(mov) {
 
   dlg.showModal();
   if (!mov) setTimeout(() => montoEl.focus(), 50);
+}
+
+// ================= Importador (vista previa) =================
+
+const PALETA = ['#e05d8a', '#5b8def', '#d98a1b', '#3fb39d', '#9b6bd6', '#c9563c', '#6d9c2e', '#2b9fc2', '#b0703c', '#7a8796'];
+
+function abrirImportador(nombreArchivo, datos) {
+  const cfg = store.state.config;
+  const todosLosIds = new Set(Object.keys(store.state.movs));
+  const filas = comparar(datos.filas, Object.values(store.state.movs), todosLosIds).sort((a, b) => b.fecha.localeCompare(a.fecha));
+  if (!filas.length) return aviso('El archivo no tiene movimientos válidos');
+
+  const cuenta = (e) => filas.filter((r) => r.estado === e).length;
+  const fechas = filas.map((r) => r.fecha).sort();
+
+  // Categorías de origen → sugerencia
+  const grupos = new Map();
+  for (const r of filas) {
+    if (r.tipo === 'traspaso' || !r.catOrigen) continue;
+    const k = r.tipo + '|' + r.catOrigen;
+    const g = grupos.get(k) || { tipo: r.tipo, nombre: r.catOrigen, n: 0, total: 0 };
+    g.n++; g.total += r.monto;
+    grupos.set(k, g);
+  }
+  const cuentasOrigen = [...new Set(filas.flatMap((r) => [r.cuentaOrigen, r.cuentaDestino, r.cuentaPropia]).filter(Boolean))];
+
+  const opcionesCat = (g) => {
+    const sug = sugerirCategoria(g.nombre, g.tipo, cfg);
+    const propias = cfg.categorias.filter((c) => c.tipo === g.tipo);
+    const nueva = 'nueva:' + g.nombre;
+    return `<option value="${esc(nueva)}" ${sug === nueva ? 'selected' : ''}>➕ Crear «${esc(g.nombre)}»</option>`
+      + propias.map((c) => `<option ${c.nombre === sug ? 'selected' : ''}>${esc(c.nombre)}</option>`).join('');
+  };
+  const opcionesCuenta = (nombre) => {
+    const sug = sugerirCuenta(nombre, cfg.cuentas);
+    const lista = [...new Set([...cfg.cuentas, nombre])];
+    return lista.map((c) => `<option value="${esc(c)}" ${c === sug ? 'selected' : ''}>${c === nombre && !cfg.cuentas.includes(nombre) ? '➕ ' : ''}${esc(c)}</option>`).join('');
+  };
+  const chip = { nuevo: ['Nuevo', 'var(--acento)'], completa: ['Completa categoría', 'var(--alerta)'], duplicado: ['Ya existe', 'var(--texto-3)'], importado: ['Ya importado', 'var(--texto-3)'] };
+  const marcado = (r) => r.estado === 'nuevo' || r.estado === 'completa';
+
+  const dlg = $('#editor');
+  dlg.innerHTML = `<form class="hoja-cuerpo" method="dialog">
+    <div class="hoja-top"><h3>Importar ${esc(datos.formato)}</h3><button type="button" class="cerrar" aria-label="Cerrar">✕</button></div>
+    <p class="ayuda">${esc(nombreArchivo)} · ${filas.length} movimientos del ${fechaLarga(fechas[0]).toLowerCase()} al ${fechaLarga(fechas.at(-1)).toLowerCase()}${datos.omitidas ? ` · ${datos.omitidas} filas sin fecha o monto omitidas` : ''}</p>
+    <div class="kpis">
+      <div class="kpi"><div class="t">Nuevos</div><div class="v num">${cuenta('nuevo')}</div></div>
+      <div class="kpi"><div class="t">Ya en la app</div><div class="v num">${cuenta('duplicado') + cuenta('completa') + cuenta('importado')}</div>
+        <div class="s">${cuenta('completa') ? `${cuenta('completa')} les falta categoría: se completa` : 'se omiten'}</div></div>
+    </div>
+    ${grupos.size ? `<h2 class="sub-h">Categorías</h2><p class="ayuda">Cómo pasar las categorías del archivo a las tuyas.</p>
+      ${[...grupos.entries()].map(([k, g]) => `<div class="mapa"><div><b>${esc(g.nombre)}</b><span class="sub">${g.tipo === 'ingreso' ? 'Ingreso' : 'Gasto'} · ${g.n} · ${fmtCLP(g.total)}</span></div>
+        <select data-mapa-cat="${esc(k)}">${opcionesCat(g)}</select></div>`).join('')}` : ''}
+    ${cuentasOrigen.length ? `<h2 class="sub-h">Cuentas</h2>
+      ${cuentasOrigen.map((c) => `<div class="mapa"><div><b>${esc(c)}</b></div><select data-mapa-cuenta="${esc(c)}">${opcionesCuenta(c)}</select></div>`).join('')}` : ''}
+    <details class="detalle-imp"><summary>Ver movimientos (${filas.length})</summary>
+      ${filas.map((r) => `<label class="fila-imp"><input type="checkbox" data-imp="${esc(r.id)}" ${marcado(r) ? 'checked' : ''} ${r.estado === 'importado' ? 'disabled' : ''}>
+        <span class="cuerpo"><span class="desc">${esc(r.tipo === 'traspaso' ? `Traspaso ${r.cuentaOrigen || ''} → ${r.cuentaDestino || '?'}` : r.descripcion || r.catOrigen || 'Sin descripción')}</span>
+        <span class="sub">${esc(r.fecha.split('-').reverse().join('/'))} · <span style="color:${chip[r.estado][1]}">${chip[r.estado][0]}</span>${r.existente ? ` · ${esc(r.existente.descripcion)}` : ''}</span></span>
+        <span class="monto num ${r.tipo}">${r.tipo === 'gasto' ? '-' : r.tipo === 'ingreso' ? '+' : ''}${fmtCLP(r.monto)}</span></label>`).join('')}
+    </details>
+    <div class="acciones"><button type="submit" class="btn primario" id="imp-ok"></button></div>
+  </form>`;
+
+  const elegidas = () => new Set($$('[data-imp]', dlg).filter((c) => c.checked).map((c) => c.dataset.imp));
+  const pintarBoton = () => { const n = elegidas().size; $('#imp-ok', dlg).textContent = n ? `Importar ${n} movimiento${n === 1 ? '' : 's'}` : 'Nada que importar'; $('#imp-ok', dlg).disabled = !n; };
+  pintarBoton();
+  dlg.addEventListener('change', (e) => { if (e.target.matches('[data-imp]')) pintarBoton(); });
+  $('.cerrar', dlg).addEventListener('click', () => dlg.close());
+
+  $('form', dlg).addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const mapaCat = {}, mapaCuenta = {};
+    const nuevasCats = [];
+    let color = cfg.categorias.length;
+    for (const s of $$('[data-mapa-cat]', dlg)) {
+      const [tipo] = s.dataset.mapaCat.split('|');
+      let cat = s.value;
+      if (cat.startsWith('nueva:')) {
+        cat = cat.slice(6);
+        if (!cfg.categorias.some((c) => c.nombre === cat) && !nuevasCats.some((c) => c.nombre === cat)) {
+          nuevasCats.push({ nombre: cat, tipo, color: PALETA[color++ % PALETA.length], presupuesto: 0 });
+        }
+      }
+      mapaCat[s.dataset.mapaCat] = cat;
+    }
+    for (const s of $$('[data-mapa-cuenta]', dlg)) mapaCuenta[s.dataset.mapaCuenta] = s.value;
+    const nuevasCuentas = [...new Set(Object.values(mapaCuenta))].filter((c) => !cfg.cuentas.includes(c));
+
+    if (nuevasCats.length || nuevasCuentas.length) {
+      await store.guardarConfig({ categorias: [...cfg.categorias, ...nuevasCats], cuentas: [...cfg.cuentas, ...nuevasCuentas] });
+    }
+    const { nuevos, cambios } = construir(filas, mapaCat, mapaCuenta, elegidas(), store.state.config.reglas);
+    await store.guardarMovsEnLote([...nuevos, ...cambios]);
+    dlg.close();
+    aviso(`${nuevos.length} importados${cambios.length ? ` · ${cambios.length} categorías completadas` : ''}`);
+    location.hash = 'movimientos';
+  });
+
+  dlg.showModal();
 }
 
 // ================= Router y render =================
