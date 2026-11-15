@@ -50,9 +50,30 @@ export function Movimientos() {
   const { mes, abrirEditor } = useUI()
   const [filtro, setFiltro] = useState('todos')
   const [busqueda, setBusqueda] = useState('')
+  // La cuenta elegida se recuerda en este dispositivo.
+  const [cuenta, setCuentaState] = useState(() => {
+    try {
+      return localStorage.getItem('filtro-cuenta') || ''
+    } catch {
+      return ''
+    }
+  })
+  const setCuenta = (c: string) => {
+    setCuentaState(c)
+    try {
+      localStorage.setItem('filtro-cuenta', c)
+    } catch {
+      /* sin almacenamiento */
+    }
+  }
 
   const q = normalizar(busqueda)
-  let lista = store.movimientos().filter((m) => m.fecha?.startsWith(mes))
+  const delMes = store.movimientos().filter((m) => m.fecha?.startsWith(mes))
+  // Cuentas: las configuradas y cualquier otra que aparezca en los movimientos
+  const cuentas = [...new Set([...store.state.config.cuentas, ...store.movimientos().map((m) => m.cuenta)].filter(Boolean))]
+  const cuentaActiva = cuentas.includes(cuenta) ? cuenta : ''
+  let lista = delMes
+  if (cuentaActiva) lista = lista.filter((m) => m.cuenta === cuentaActiva)
   if (filtro !== 'todos') lista = lista.filter((m) => m.tipo === filtro)
   if (q) lista = lista.filter((m) => normalizar(`${m.descripcion} ${m.categoria} ${m.cuenta} ${m.notas}`).includes(q))
   lista.sort((a, b) => (b.fecha + (b.creado || '')).localeCompare(a.fecha + (a.creado || '')))
@@ -70,6 +91,26 @@ export function Movimientos() {
         <Search className="text-muted-foreground absolute top-1/2 left-3 size-4 -translate-y-1/2" />
         <Input type="search" placeholder="Buscar…" value={busqueda} onChange={(e) => setBusqueda(e.target.value)} className="bg-card pl-9" />
       </div>
+      <div className="no-scrollbar -mx-4 flex gap-2 overflow-x-auto px-4" role="group" aria-label="Filtrar por cuenta">
+        {['', ...cuentas.filter((c) => c === cuentaActiva || delMes.some((m) => m.cuenta === c))].map((c) => {
+          const n = c ? delMes.filter((m) => m.cuenta === c).length : delMes.length
+          const activa = c === cuentaActiva
+          return (
+            <button
+              key={c || 'todas'}
+              onClick={() => setCuenta(c)}
+              aria-pressed={activa}
+              className={cn(
+                'flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm whitespace-nowrap transition-colors',
+                activa ? 'bg-primary text-primary-foreground border-primary' : 'bg-card text-muted-foreground hover:text-foreground',
+              )}
+            >
+              {c || 'Todas las cuentas'}
+              <span className={cn('num text-xs', activa ? 'opacity-80' : 'opacity-60')}>{n}</span>
+            </button>
+          )
+        })}
+      </div>
       <Tabs value={filtro} onValueChange={setFiltro}>
         <TabsList className="w-full">
           <TabsTrigger value="todos">Todos</TabsTrigger>
@@ -83,7 +124,12 @@ export function Movimientos() {
         <>
           <div className="text-muted-foreground num flex justify-between px-1 text-xs">
             <span>{lista.length} movimientos</span>
-            <span>Neto {fmtCLP(neto)}</span>
+            <span>
+              <span className="text-expense">-{fmtCLP(sumar(lista.filter((m) => m.tipo === 'gasto')))}</span>
+              {' · '}
+              <span className="text-income">+{fmtCLP(sumar(lista.filter((m) => m.tipo === 'ingreso')))}</span>
+              {' · '}Neto {fmtCLP(neto)}
+            </span>
           </div>
           {[...porDia].map(([fecha, ms]) => (
             <section key={fecha}>
@@ -99,7 +145,7 @@ export function Movimientos() {
       ) : (
         <div className="text-muted-foreground py-12 text-center text-sm">
           <b className="text-foreground mb-1 block text-base">Nada por aquí</b>
-          No hay movimientos {q || filtro !== 'todos' ? 'con ese filtro ' : ''}en {nombreMes(mes)}.
+          No hay movimientos {q || filtro !== 'todos' || cuentaActiva ? 'con ese filtro ' : ''}en {nombreMes(mes)}.
         </div>
       )}
     </div>
