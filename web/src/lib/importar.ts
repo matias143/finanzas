@@ -99,6 +99,23 @@ export function leerFecha(v: Celda): { fecha: string; ms: number } | null {
     const y = m[3].length === 2 ? '20' + m[3] : m[3]
     return { fecha: `${y}-${dos(m[2])}-${dos(m[1])}`, ms: Date.UTC(+y, +m[2] - 1, +m[1]) }
   }
+  // "15 nov 2026", "15-nov-26", "15 de noviembre de 2026"
+  const MESES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic']
+  const n = normalizar(s)
+  m = n.match(/^(\d{1,2}) (?:de )?([a-z]{3})[a-z]* (?:de )?(\d{2,4})/)
+  if (m && MESES.includes(m[2] === 'set' ? 'sep' : m[2])) {
+    const mes = MESES.indexOf(m[2] === 'set' ? 'sep' : m[2]) + 1
+    const y = m[3].length === 2 ? '20' + m[3] : m[3]
+    return { fecha: `${y}-${dos(mes)}-${dos(m[1])}`, ms: Date.UTC(+y, mes - 1, +m[1]) }
+  }
+  // "15/11" sin año: se asume el año actual (o el anterior si quedaría en el futuro)
+  m = s.match(/^(\d{1,2})[-/.](\d{1,2})$/)
+  if (m) {
+    const hoy = new Date()
+    let y = hoy.getFullYear()
+    if (Date.UTC(y, +m[2] - 1, +m[1]) > hoy.getTime() + 864e5) y--
+    return { fecha: `${y}-${dos(m[2])}-${dos(m[1])}`, ms: Date.UTC(y, +m[2] - 1, +m[1]) }
+  }
   return null
 }
 
@@ -217,6 +234,13 @@ export function interpretar(filas: Fila[]): ArchivoInterpretado {
     })
   })
 
+  if (!salida.length) {
+    // Se encontraron los títulos, pero ninguna fila se pudo leer: mostrar qué hay para poder ajustarlo.
+    const nombres = (Object.entries(cols) as [Columna, number][]).map(([k, j]) => `${k}="${String(filas[enc.fila][j]).trim()}"`).join(', ')
+    const ejemplo = filas.slice(enc.fila + 1).find((f) => f && f.some((c) => c !== '' && c != null))
+    const ej = ejemplo ? ejemplo.map((c) => (c instanceof Date ? c.toISOString().slice(0, 10) : String(c ?? '').slice(0, 20))).join(' | ') : '(sin filas)'
+    throw new Error(`Leí los títulos (${nombres}) pero ninguna fila. Primera fila: ${ej}`)
+  }
   return { formato: esWallet ? 'Wallet' : 'Cartola', filas: salida, omitidas }
 }
 
