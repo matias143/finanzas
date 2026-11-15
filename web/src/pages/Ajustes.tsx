@@ -164,7 +164,7 @@ function Reglas() {
   const aplicar = async () => {
     const cambios = store
       .movimientos()
-      .filter((m) => m.tipo !== 'traspaso' && (!m.categoria || ['Otros', 'Sin categoría', 'Transferencias', 'Transferencias recibidas'].includes(m.categoria)))
+      .filter((m) => m.tipo !== 'traspaso' && (!m.categoria || ['Otros', 'Otros ingresos', 'Sin categoría', 'Transferencias', 'Transferencias recibidas'].includes(m.categoria)))
       .map((m) => ({ m, cat: categorizar(m.descripcion, store.state.config.reglas) }))
       .filter(({ m, cat }) => cat && cat !== m.categoria && store.categoria(cat)?.tipo === m.tipo)
       .map(({ m, cat }) => ({ id: m.id, categoria: cat! }))
