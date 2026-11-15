@@ -71,6 +71,41 @@ function detectarEncabezado(filas: Fila[]) {
   return null
 }
 
+/** RUT sin puntos ni guion: "21.124.853-K" o "021124853K" → "21124853K" */
+function soloRut(s: string) {
+  const m = String(s).toUpperCase().replace(/[.\s-]/g, '').match(/^0*(\d{7,8}[\dK])$/)
+  return m ? m[1] : ''
+}
+
+const PROCESADORES = /^(tuu|merpago|mercadopago|mp|sumup|payu|flow|getnet|klap|transbank|webpay|dlocal|paypal|pago facil)\s*\*\s*/i
+
+/**
+ * Limpia la descripción de una cartola:
+ *  "0183487949 Transf a Marco Gonzalez"          → "Marco Gonzalez" (transferencia)
+ *  "021124853K Transf a Mercado pago"            → "Mercado pago" + rut 21124853K
+ *  "Compra Nacional VD TUU* Donde Chechito"       → "Donde Chechito"
+ *  "Compra Nacional VD UNIMARC LOS NOTROS"        → "Unimarc Los Notros"
+ */
+export function limpiarGlosa(glosa: string) {
+  let x = glosa.replace(/\s+/g, ' ').trim()
+  let rut = ''
+  const num = x.match(/^(\d{6,}[\dkK]?)\s+(.*)$/)
+  if (num) {
+    rut = soloRut(num[1])
+    x = num[2]
+  }
+  let transferencia = false
+  const tr = x.match(/^transf(?:erencia)?\.?\s*(?:a|de|desde|hacia|para)?\s+(.+)$/i)
+  if (tr) {
+    transferencia = true
+    x = tr[1]
+  }
+  x = x.replace(/^(compras?|pagos?|cargos?)(\s+recurrentes?)?(\s+(nacional|internacional|nac|int))?(\s+(vd|vc|cd|tc|td|debito|credito))?\s+/i, '')
+  x = x.replace(PROCESADORES, '')
+  if (x === x.toUpperCase() && /[A-Z]/.test(x)) x = x.toLowerCase().replace(/(^|[\s*\-./])([a-záéíóúñ])/g, (_, a, b) => a + b.toUpperCase())
+  return { descripcion: x.trim() || glosa, rut, transferencia }
+}
+
 /** Primeras filas con contenido, para mostrar en el error y saber qué trae el archivo. */
 function muestra(filas: Fila[]) {
   return filas
@@ -83,7 +118,7 @@ function muestra(filas: Fila[]) {
 const dos = (n: number | string) => String(n).padStart(2, '0')
 const fechaLocal = (d: Date) => `${d.getFullYear()}-${dos(d.getMonth() + 1)}-${dos(d.getDate())}`
 
-export function leerFecha(v: Celda): { fecha: string; ms: number } | null {
+export function leerFecha(v: Celda, referencia?: Date): { fecha: string; ms: number } | null {
   if (v instanceof Date && !isNaN(v.getTime())) return { fecha: fechaLocal(v), ms: v.getTime() }
   if (typeof v === 'number' && v > 20000 && v < 80000) {
     // Número de serie de Excel (días desde 1899-12-30)
@@ -108,12 +143,13 @@ export function leerFecha(v: Celda): { fecha: string; ms: number } | null {
     const y = m[3].length === 2 ? '20' + m[3] : m[3]
     return { fecha: `${y}-${dos(mes)}-${dos(m[1])}`, ms: Date.UTC(+y, mes - 1, +m[1]) }
   }
-  // "15/11" sin año: se asume el año actual (o el anterior si quedaría en el futuro)
+  // "15/11" sin año: se usa el año del período de la cartola ("Hasta 30/10/2026") o el actual,
+  // y el anterior si la fecha quedaría después de ese límite (cartolas que cruzan de diciembre a enero).
   m = s.match(/^(\d{1,2})[-/.](\d{1,2})$/)
   if (m) {
-    const hoy = new Date()
-    let y = hoy.getFullYear()
-    if (Date.UTC(y, +m[2] - 1, +m[1]) > hoy.getTime() + 864e5) y--
+    const ref = referencia || new Date()
+    let y = ref.getFullYear()
+    if (Date.UTC(y, +m[2] - 1, +m[1]) > ref.getTime() + 864e5) y--
     return { fecha: `${y}-${dos(m[2])}-${dos(m[1])}`, ms: Date.UTC(y, +m[2] - 1, +m[1]) }
   }
   return null
@@ -144,6 +180,8 @@ export interface FilaImportada {
   cuentaDestino?: string
   cuentaPropia?: string
   esTransfer: boolean
+  /** Categoría sugerida cuando el archivo no trae categorías (ej. "Transferencias"). */
+  catSugerida?: string
 }
 
 export interface ArchivoInterpretado {
@@ -160,11 +198,34 @@ export function interpretar(filas: Fila[]): ArchivoInterpretado {
   const celda = (f: Fila, k: Columna): Celda => (cols[k] === undefined ? '' : f[cols[k]!])
   const esWallet = (['cuenta', 'categoria', 'tipo', 'transfer'] as Columna[]).every((k) => cols[k] !== undefined)
 
+  // Datos de la cabecera de una cartola: RUT del titular y fecha "Hasta" del período.
+  const cabecera = filas.slice(0, enc.fila)
+  let rutTitular = ''
+  let referencia: Date | undefined
+  for (const f of cabecera) {
+    (f || []).forEach((c, j) => {
+      const n = normalizar(c)
+      if (/^rut\b/.test(n) && !rutTitular) rutTitular = soloRut(String(f[j + 1] ?? '')) || soloRut(String(c).replace(/rut/i, ''))
+      const fe = leerFecha(c)
+      if (fe && /\d{4}/.test(String(c)) && (!referencia || fe.ms > referencia.getTime())) referencia = new Date(fe.ms)
+    })
+  }
+
+  // Banco de la cartola (para la cuenta de cada movimiento si el archivo no trae columna de cuenta).
+  const textoCabecera = normalizar(cabecera.flat().join(' '))
+  const banco = /santander/.test(textoCabecera)
+    ? 'Santander'
+    : /mercado ?pago/.test(textoCabecera)
+      ? 'Mercado Pago'
+      : /bancoestado|banco estado|cuenta rut/.test(textoCabecera)
+        ? 'BancoEstado'
+        : ''
+
   const crudos: FilaImportada[] = []
   let omitidas = 0
   for (const f of filas.slice(enc.fila + 1)) {
     if (!f || f.every((c) => c === '' || c == null)) continue
-    const fe = leerFecha(celda(f, 'fecha'))
+    const fe = leerFecha(celda(f, 'fecha'), referencia)
     let monto = cols.monto !== undefined ? leerMonto(celda(f, 'monto')) : 0
     if (cols.monto === undefined) {
       const cargo = Math.abs(leerMonto(celda(f, 'cargo')))
@@ -172,7 +233,7 @@ export function interpretar(filas: Fila[]): ArchivoInterpretado {
       monto = abono ? abono : -cargo
     }
     if (!fe || !monto) {
-      omitidas++
+      if (fe || monto) omitidas++ // las filas de pie de página (mensajes, resúmenes) no cuentan
       continue
     }
 
@@ -184,7 +245,16 @@ export function interpretar(filas: Fila[]): ArchivoInterpretado {
     const transfer = celda(f, 'transfer')
     const esTransfer =
       transfer === true || transfer === 1 || /^(1|true|si|verdadero)$/i.test(String(transfer)) || /^transfer$/i.test(String(celda(f, 'categoria')))
-    const desc = String(celda(f, 'descripcion') || celda(f, 'payee') || '').trim()
+    const glosa = String(celda(f, 'descripcion') || celda(f, 'payee') || '').trim()
+    const { descripcion: desc, rut, transferencia } = esWallet ? { descripcion: glosa, rut: '', transferencia: false } : limpiarGlosa(glosa)
+    let catSugerida: string | undefined
+    let esPropia = false
+    if (transferencia) {
+      // "021124853K Transf a Mercado pago": si el número es tu RUT, la plata va a una cuenta tuya.
+      esPropia = Boolean(rutTitular && rut && rut === rutTitular)
+      catSugerida = tipo === 'ingreso' ? 'Transferencias recibidas' : 'Transferencias'
+    }
+    if (esPropia) tipo = 'traspaso'
 
     crudos.push({
       fecha: fe.fecha,
@@ -192,9 +262,10 @@ export function interpretar(filas: Fila[]): ArchivoInterpretado {
       montoConSigno: monto,
       monto: Math.abs(monto),
       tipo,
-      descripcion: desc,
+      descripcion: esPropia ? `Traspaso ${monto < 0 ? 'a' : 'desde'} ${desc}` : desc,
+      catSugerida,
       catOrigen: String(celda(f, 'categoria') || '').trim(),
-      cuentaOrigen: String(celda(f, 'cuenta') || '').trim(),
+      cuentaOrigen: String(celda(f, 'cuenta') || '').trim() || banco,
       esTransfer,
     })
   }
@@ -370,7 +441,7 @@ export function construir(
     let categoria: string
     if (r.tipo === 'traspaso') categoria = 'Traspaso'
     else if (r.catOrigen) categoria = mapaCat[r.tipo + '|' + r.catOrigen]
-    else categoria = categorizar(r.descripcion, reglas) || (r.tipo === 'ingreso' ? 'Otros ingresos' : 'Otros')
+    else categoria = categorizar(r.descripcion, reglas) || r.catSugerida || (r.tipo === 'ingreso' ? 'Otros ingresos' : 'Otros')
 
     if (r.estado === 'completa' && r.existente) {
       cambios.push({ id: r.existente.id, categoria })
@@ -378,7 +449,7 @@ export function construir(
     }
     let descripcion = r.descripcion
     let cuenta = cuentaDe(r.cuentaPropia || r.cuentaOrigen)
-    if (r.tipo === 'traspaso') {
+    if (r.tipo === 'traspaso' && r.esTransfer) {
       const destino = cuentaDe(r.cuentaDestino)
       descripcion = destino ? `Traspaso a ${destino}` : r.cuentaOrigen ? 'Traspaso' : 'Traspaso desde otra cuenta'
       if (r.cuentaOrigen) cuenta = cuentaDe(r.cuentaOrigen)

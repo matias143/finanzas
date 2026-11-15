@@ -194,7 +194,7 @@ export function Importador({ nombre, datos, onClose }: { nombre: string; datos: 
                   />
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-sm">
-                      {r.tipo === 'traspaso' ? `Traspaso ${r.cuentaOrigen || ''} → ${r.cuentaDestino || '?'}` : r.descripcion || r.catOrigen || 'Sin descripción'}
+                      {r.tipo === 'traspaso' && r.esTransfer ? `Traspaso ${r.cuentaOrigen || ''} → ${r.cuentaDestino || '?'}` : r.descripcion || r.catOrigen || 'Sin descripción'}
                     </span>
                     <span className="text-muted-foreground block truncate text-xs">
                       {fechaCorta(r.fecha)} · <span className={CHIP[r.estado][1]}>{CHIP[r.estado][0]}</span>
