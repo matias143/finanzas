@@ -289,10 +289,18 @@ function interpretarTexto(texto, asunto) {
     return santander;
   }
 
-  const esIngreso = /(recibiste|te (transfiri[oó]|envi[oó]|deposit[oó])|has recibido|transferencia recibida|ingreso de dinero|te lleg[oó]|dep[oó]sito recibido)/i.test(t);
-  const esGasto = /(transferiste|enviaste|has (transferido|enviado|realizado)|transferencia (realizada|enviada|a terceros|exitosa|de fondos)|pagaste|compra|cargo|realizaste|pago (realizado|aprobado|exitoso)|giro|enviamos tu transferencia|tu transferencia (fue|ha sido) enviada)/i.test(t);
+  // Se quita el pie de página ("Recibiste este e-mail porque…", "Si no hiciste esta transferencia…"),
+  // que si no confunde una transferencia enviada con una recibida.
+  const cuerpo = t
+    .replace(/recibiste este (e-?mail|correo|mensaje)[^\n]*/gi, ' ')
+    .replace(/si no (hiciste|realizaste|reconoces)[^\n]*/gi, ' ')
+    .replace(/(cancelar suscripci[oó]n|c[oó]mo cuidamos tu privacidad)[^\n]*/gi, ' ');
+  const esIngreso = /(recibiste|te (transfiri[oó]|envi[oó]|deposit[oó])|has recibido|transferencia recibida|ingreso de dinero|te lleg[oó]|dep[oó]sito recibido)/i.test(cuerpo);
+  const esGasto = /(transferiste|enviaste|has (transferido|enviado|realizado)|transferencia (realizada|enviada|a terceros|exitosa|de fondos)|pagaste|compra|cargo|realizaste|pago (realizado|aprobado|exitoso)|giro|enviamos tu transferencia|tu transferencia (fue|ha sido) enviada)/i.test(cuerpo);
   if (!esIngreso && !esGasto) return null;
-  const tipo = esIngreso && !/(transferiste|enviaste|pagaste)/i.test(t) ? 'ingreso' : 'gasto';
+  // Frases que solo pueden ser un gasto ganan siempre.
+  const gastoSeguro = /(transferiste|enviaste|pagaste|compraste|enviamos tu transferencia|tu transferencia (fue|ha sido) enviada|datos del beneficiario)/i.test(cuerpo);
+  const tipo = esIngreso && !gastoSeguro ? 'ingreso' : 'gasto';
 
   const contraparte = extraerContraparte_(t, tipo);
   const r = { monto: monto, tipo: tipo, descripcion: contraparte || limpiar_(asunto) || 'Movimiento' };
