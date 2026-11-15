@@ -11,6 +11,7 @@ import type { Movimiento } from '@/lib/types'
 import { fechaLarga, fmtCLP, nombreMes, normalizar, sumar } from '@/lib/util'
 import { cn } from '@/lib/utils'
 import { destinoDe, tocaCuenta } from '@/lib/cuentas'
+import { saldoCuenta } from '@/lib/saldos'
 
 const ETIQUETA_ORIGEN: Record<string, string> = { gmail: 'correo', notif: 'notificación', csv: 'cartola', importado: 'importado' }
 
@@ -130,7 +131,12 @@ export function Movimientos() {
       {lista.length ? (
         <>
           <div className="text-muted-foreground num flex justify-between px-1 text-xs">
-            <span>{lista.length} movimientos</span>
+            <span>
+              {lista.length} movimientos
+              {cuentaActiva && store.state.config.saldos?.[cuentaActiva] && (
+                <> · saldo <b className="text-foreground">{fmtCLP(saldoCuenta(store.movimientos(), cuentaActiva, store.state.config).saldo)}</b></>
+              )}
+            </span>
             <span>
               <span className="text-expense">-{fmtCLP(sale)}</span>
               {' · '}

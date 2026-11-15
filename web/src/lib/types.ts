@@ -35,9 +35,17 @@ export interface Config {
   cuentas: string[]
   umbralHormiga: number
   patronAhorro: string
+  /** Saldo conocido de cada cuenta en un momento; desde ahí se suman los movimientos. */
+  saldos?: Record<string, SaldoBase>
   categorias: Categoria[]
   reglas: Regla[]
   actualizado: string | null
 }
 
 export type EstadoSync = 'local' | 'sincronizando' | 'ok' | 'error'
+
+export interface SaldoBase {
+  monto: number
+  fecha: string // YYYY-MM-DD del ajuste
+  momento: string // ISO: movimientos de ese mismo día creados después sí se suman
+}

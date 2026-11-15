@@ -2,6 +2,7 @@ import { ArrowDownRight, ArrowUpRight, CalendarDays, PiggyBank, Repeat } from 'l
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Progress } from '@/components/ui/progress'
+import { Cuentas } from '@/components/Cuentas'
 import { BarrasMeses, DonaCategorias, LineaAcumulado } from '@/components/charts'
 import { useStore } from '@/lib/store'
 import { useUI } from '@/lib/ui'
@@ -197,6 +198,8 @@ export function Inicio() {
 
   return (
     <div className="space-y-3">
+      <Cuentas />
+
       <Card className="gap-3 py-5">
         <CardContent className="px-5">
           <div className="text-muted-foreground text-sm">Balance del mes</div>
