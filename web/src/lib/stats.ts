@@ -2,6 +2,7 @@
 // Los movimientos tipo "traspaso" (entre tus propias cuentas) no cuentan como gasto ni ingreso.
 import type { Categoria, Movimiento } from './types'
 import { diasEnMes, normalizar, sumar, sumarMes } from './util'
+import { destinoDe } from './cuentas'
 
 /** Categorías de gastos fijos: se pagan una vez al mes y no se proyectan día a día. */
 const FIJAS = /^(hogar|cuentas b[aá]sicas|suscripciones|educaci[oó]n)$/i
@@ -129,7 +130,7 @@ export function recurrentes(movs: Movimiento[], ym: string) {
  * Ahorro: traspasos hacia tu cuenta de ahorro (descripción calza con el patrón, ej. "Traspaso a Banco Estado").
  * Se restan los que salen de ella: descripción con "desde" o registrados con la cuenta de ahorro como origen.
  */
-export function ahorro(movs: Movimiento[], ym: string, patron: string) {
+export function ahorro(movs: Movimiento[], ym: string, patron: string, cuentas: string[] = []) {
   let re: RegExp
   try {
     re = new RegExp(patron || 'estado|ahorro', 'i')
@@ -138,6 +139,9 @@ export function ahorro(movs: Movimiento[], ym: string, patron: string) {
   }
   const signo = (m: Movimiento) => {
     if (m.tipo !== 'traspaso') return 0
+    // Con destino conocido: entra a la cuenta de ahorro (+) o sale de ella (-)
+    const destino = destinoDe(m, cuentas)
+    if (destino) return re.test(normalizar(destino)) ? 1 : re.test(normalizar(m.cuenta)) ? -1 : 0
     const desc = normalizar(m.descripcion)
     if (re.test(desc)) return /\bdesde\b/.test(desc) ? -1 : 1
     if (re.test(normalizar(m.cuenta))) return -1

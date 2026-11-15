@@ -9,6 +9,8 @@ export interface Movimiento {
   categoria: string
   descripcion: string
   cuenta: string
+  /** Solo traspasos: cuenta a la que llega la plata (ej. "BancoEstado (ahorro)"). */
+  destino?: string
   origen?: Origen
   notas?: string
   creado?: string

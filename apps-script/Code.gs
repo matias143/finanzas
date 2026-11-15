@@ -34,7 +34,8 @@ const CONFIG = {
   ],
 };
 
-const COLUMNAS = ['id', 'fecha', 'monto', 'tipo', 'categoria', 'descripcion', 'cuenta', 'origen', 'notas', 'creado', 'actualizado', 'eliminado', 'sync'];
+// 'destino' (cuenta a la que va un traspaso) va al final para no mover las columnas existentes.
+const COLUMNAS = ['id', 'fecha', 'monto', 'tipo', 'categoria', 'descripcion', 'cuenta', 'origen', 'notas', 'creado', 'actualizado', 'eliminado', 'sync', 'destino'];
 const HOJA_MOVS = 'Movimientos';
 const HOJA_CONFIG = 'Config';
 const HOJA_PENDIENTES = 'Sin leer';
@@ -86,10 +87,14 @@ function prepararHojas_(ss) {
     h.appendRow(COLUMNAS);
     h.setFrozenRows(1);
     h.getRange(1, 1, 1, COLUMNAS.length).setFontWeight('bold');
+  } else {
+    // Planillas creadas antes: agregar los títulos de columnas nuevas.
+    const titulos = h.getRange(1, 1, 1, COLUMNAS.length).getValues()[0];
+    COLUMNAS.forEach(function (c, i) { if (!titulos[i]) h.getRange(1, i + 1).setValue(c).setFontWeight('bold'); });
   }
   // Texto plano para que Sheets no convierta fechas ni ids.
   h.getRange('A:B').setNumberFormat('@');
-  h.getRange('D:M').setNumberFormat('@');
+  h.getRange('D:N').setNumberFormat('@');
   h.getRange('C:C').setNumberFormat('#,##0');
 
   if (!ss.getSheetByName(HOJA_CONFIG)) ss.insertSheet(HOJA_CONFIG).getRange('A1').setNumberFormat('@');
@@ -190,7 +195,7 @@ function leerMovimientos_(ss) {
       const m = {};
       COLUMNAS.forEach(function (c, i) { m[c] = fila[i]; });
       if (m.fecha instanceof Date) m.fecha = Utilities.formatDate(m.fecha, CONFIG.ZONA, 'yyyy-MM-dd');
-      ['id', 'fecha', 'tipo', 'categoria', 'descripcion', 'cuenta', 'origen', 'notas', 'creado', 'actualizado', 'sync'].forEach(function (c) { m[c] = aTexto_(m[c]); });
+      ['id', 'fecha', 'tipo', 'categoria', 'descripcion', 'cuenta', 'origen', 'notas', 'creado', 'actualizado', 'sync', 'destino'].forEach(function (c) { m[c] = aTexto_(m[c]); });
       m.monto = Number(m.monto) || 0;
       m.eliminado = m.eliminado === true || m.eliminado === 'true' || m.eliminado === 'TRUE';
       return m;
@@ -308,6 +313,8 @@ function interpretarTexto(texto, asunto) {
   if (contraparte && esMiNombre_(contraparte, miNombre_())) {
     r.tipo = 'traspaso';
     r.descripcion = tipo === 'gasto' ? 'Traspaso a cuenta propia' : 'Traspaso desde cuenta propia';
+    const entidad = t.match(/(?:entidad|banco(?: de destino)?|instituci[oó]n)\s*:\s*([^\n\r]{2,40})/i);
+    if (entidad && tipo === 'gasto') r.bancoDestino = limpiar_(entidad[1]);
   }
   if (fecha) r.fecha = fecha;
   return r;
@@ -372,6 +379,8 @@ function interpretarSantander_(t) {
     if (origenSoyYo) recordarMiNombre_(nombreOrigen);
     const destinoSoyYo = esMiNombre_(nombreDestino, yo) || esMiNombre_(nombreDestino, miNombre_());
     if (mismoRut || (origenSoyYo && destinoSoyYo)) {
+      // El banco del destino es lo confiable; el nombre puede ser un apodo ("Mercado pago" para una cuenta BancoEstado).
+      if (banco || nombreDestino) return { tipo: 'traspaso', descripcion: 'Traspaso', bancoDestino: banco || nombreDestino };
       const alias = nombreDestino && !esMiNombre_(nombreDestino, yo) && !esMiNombre_(nombreDestino, miNombre_()) ? nombreDestino : '';
       // Incluye el banco para que el ahorro (ej. BancoEstado) se reconozca aunque el apodo sea otro.
       const bancoExtra = alias && banco && normalizar_(banco).indexOf(normalizar_(alias)) < 0 ? ' (' + banco + ')' : '';
@@ -479,9 +488,25 @@ function categorizar_(descripcion, tipo, config, porDefecto) {
   return porDefecto || (tipo === 'ingreso' ? 'Transferencias recibidas' : 'Transferencias');
 }
 
+/** Nombre de un banco → una de tus cuentas configuradas ("Banco Estado" → "BancoEstado (ahorro)"). */
+function cuentaPara_(texto, config) {
+  const n = normalizar_(texto);
+  const cuentas = (config && config.cuentas) || [];
+  const buscar = function (re) { return cuentas.filter(function (c) { return re.test(normalizar_(c)); })[0]; };
+  if (/estado|cuenta rut/.test(n)) return buscar(/estado/) || 'BancoEstado';
+  if (/mercado ?pago|mercadopago/.test(n)) return buscar(/mercado/) || 'Mercado Pago';
+  if (/santander/.test(n)) return buscar(/santander/) || 'Santander';
+  return cuentas.filter(function (c) { return n.indexOf(normalizar_(c)) >= 0; })[0] || limpiar_(texto);
+}
+
 function construirMovimiento_(id, datos, cuenta, origen, fecha, config) {
   const ahora = new Date().toISOString();
+  if (datos.tipo === 'traspaso' && datos.bancoDestino) {
+    datos.destino = cuentaPara_(datos.bancoDestino, config);
+    datos.descripcion = 'Traspaso a ' + datos.destino;
+  }
   return {
+    destino: datos.destino || '',
     id: id,
     fecha: datos.fecha || Utilities.formatDate(fecha, CONFIG.ZONA, 'yyyy-MM-dd'),
     monto: datos.monto,
@@ -562,6 +587,7 @@ function verUltimoCorreo() {
  */
 function reprocesarCorreos() {
   const ss = libro_();
+  prepararHojas_(ss); // agrega columnas nuevas (ej. "destino") a planillas antiguas
   const config = leerConfig_(ss);
   const existentes = {};
   leerMovimientos_(ss).forEach(function (m) { existentes[m.id] = m; });

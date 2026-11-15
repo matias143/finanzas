@@ -10,11 +10,14 @@ import { colorDe } from '@/lib/colores'
 import type { Movimiento } from '@/lib/types'
 import { fechaLarga, fmtCLP, nombreMes, normalizar, sumar } from '@/lib/util'
 import { cn } from '@/lib/utils'
+import { destinoDe, tocaCuenta } from '@/lib/cuentas'
 
 const ETIQUETA_ORIGEN: Record<string, string> = { gmail: 'correo', notif: 'notificación', csv: 'cartola', importado: 'importado' }
 
-function FilaMov({ m, onClick }: { m: Movimiento; onClick: () => void }) {
-  const signo = m.tipo === 'ingreso' ? '+' : m.tipo === 'gasto' ? '-' : ''
+function FilaMov({ m, onClick, cuentaVista, destino }: { m: Movimiento; onClick: () => void; cuentaVista: string; destino: string }) {
+  // Un traspaso visto desde una cuenta: entra (+) o sale (-) de ella
+  const signo =
+    m.tipo === 'ingreso' ? '+' : m.tipo === 'gasto' ? '-' : cuentaVista ? (destino === cuentaVista ? '+' : m.cuenta === cuentaVista ? '-' : '') : ''
   const inicial = (m.descripcion || m.categoria || '?').trim()[0]?.toUpperCase() || '?'
   return (
     <button onClick={onClick} className="hover:bg-accent/50 flex w-full items-center gap-3 px-3.5 py-3 text-left transition-colors">
@@ -34,7 +37,7 @@ function FilaMov({ m, onClick }: { m: Movimiento; onClick: () => void }) {
           )}
         </span>
         <span className="text-muted-foreground block truncate text-xs">
-          {m.tipo === 'traspaso' ? 'Traspaso' : m.categoria || 'Sin categoría'} · {m.cuenta}
+          {m.tipo === 'traspaso' ? `Traspaso · ${m.cuenta || 'otra cuenta'}${destino ? ' → ' + destino : ''}` : `${m.categoria || 'Sin categoría'} · ${m.cuenta}`}
         </span>
       </span>
       <span className={cn('num shrink-0 font-semibold', m.tipo === 'ingreso' && 'text-income', m.tipo === 'traspaso' && 'text-muted-foreground')}>
@@ -72,8 +75,9 @@ export function Movimientos() {
   // Cuentas: las configuradas y cualquier otra que aparezca en los movimientos
   const cuentas = [...new Set([...store.state.config.cuentas, ...store.movimientos().map((m) => m.cuenta)].filter(Boolean))]
   const cuentaActiva = cuentas.includes(cuenta) ? cuenta : ''
+  const toca = (m: Movimiento, c: string) => tocaCuenta(m, c, cuentas)
   let lista = delMes
-  if (cuentaActiva) lista = lista.filter((m) => m.cuenta === cuentaActiva)
+  if (cuentaActiva) lista = lista.filter((m) => toca(m, cuentaActiva))
   if (filtro !== 'todos') lista = lista.filter((m) => m.tipo === filtro)
   if (q) lista = lista.filter((m) => normalizar(`${m.descripcion} ${m.categoria} ${m.cuenta} ${m.notas}`).includes(q))
   lista.sort((a, b) => (b.fecha + (b.creado || '')).localeCompare(a.fecha + (a.creado || '')))
@@ -83,7 +87,10 @@ export function Movimientos() {
     if (!porDia.has(m.fecha)) porDia.set(m.fecha, [])
     porDia.get(m.fecha)!.push(m)
   }
-  const neto = sumar(lista.filter((m) => m.tipo === 'ingreso')) - sumar(lista.filter((m) => m.tipo === 'gasto'))
+  // Con una cuenta elegida, los traspasos cuentan como plata que entra o sale de esa cuenta.
+  const entra = sumar(lista.filter((m) => m.tipo === 'ingreso' || (cuentaActiva && m.tipo === 'traspaso' && destinoDe(m, cuentas) === cuentaActiva)))
+  const sale = sumar(lista.filter((m) => m.tipo === 'gasto' || (cuentaActiva && m.tipo === 'traspaso' && m.cuenta === cuentaActiva)))
+  const neto = entra - sale
 
   return (
     <div className="space-y-3">
@@ -92,8 +99,8 @@ export function Movimientos() {
         <Input type="search" placeholder="Buscar…" value={busqueda} onChange={(e) => setBusqueda(e.target.value)} className="bg-card pl-9" />
       </div>
       <div className="no-scrollbar -mx-4 flex gap-2 overflow-x-auto px-4" role="group" aria-label="Filtrar por cuenta">
-        {['', ...cuentas.filter((c) => c === cuentaActiva || delMes.some((m) => m.cuenta === c))].map((c) => {
-          const n = c ? delMes.filter((m) => m.cuenta === c).length : delMes.length
+        {['', ...cuentas.filter((c) => c === cuentaActiva || delMes.some((m) => toca(m, c)))].map((c) => {
+          const n = c ? delMes.filter((m) => toca(m, c)).length : delMes.length
           const activa = c === cuentaActiva
           return (
             <button
@@ -125,9 +132,9 @@ export function Movimientos() {
           <div className="text-muted-foreground num flex justify-between px-1 text-xs">
             <span>{lista.length} movimientos</span>
             <span>
-              <span className="text-expense">-{fmtCLP(sumar(lista.filter((m) => m.tipo === 'gasto')))}</span>
+              <span className="text-expense">-{fmtCLP(sale)}</span>
               {' · '}
-              <span className="text-income">+{fmtCLP(sumar(lista.filter((m) => m.tipo === 'ingreso')))}</span>
+              <span className="text-income">+{fmtCLP(entra)}</span>
               {' · '}Neto {fmtCLP(neto)}
             </span>
           </div>
@@ -136,7 +143,7 @@ export function Movimientos() {
               <h3 className="text-muted-foreground mb-1.5 px-1 text-xs">{fechaLarga(fecha)}</h3>
               <div className="bg-card divide-y overflow-hidden rounded-xl border shadow-sm">
                 {ms.map((m) => (
-                  <FilaMov key={m.id} m={m} onClick={() => abrirEditor(m)} />
+                  <FilaMov key={m.id} m={m} onClick={() => abrirEditor(m)} cuentaVista={cuentaActiva} destino={destinoDe(m, cuentas)} />
                 ))}
               </div>
             </section>

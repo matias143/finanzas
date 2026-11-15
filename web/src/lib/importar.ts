@@ -503,8 +503,14 @@ export function construir(
     }
     let descripcion = r.descripcion
     let cuenta = cuentaDe(r.cuentaPropia || r.cuentaOrigen)
+    let destino = ''
+    if (r.tipo === 'traspaso' && !r.esTransfer && r.montoConSigno > 0) {
+      // Cartola donde la plata ENTRA a esta cuenta: la cuenta es el destino y el origen no se conoce.
+      destino = cuenta
+      cuenta = ''
+    }
     if (r.tipo === 'traspaso' && r.esTransfer) {
-      const destino = cuentaDe(r.cuentaDestino)
+      destino = cuentaDe(r.cuentaDestino)
       descripcion = destino ? `Traspaso a ${destino}` : r.cuentaOrigen ? 'Traspaso' : 'Traspaso desde otra cuenta'
       if (r.cuentaOrigen) cuenta = cuentaDe(r.cuentaOrigen)
     }
@@ -518,6 +524,7 @@ export function construir(
       cuenta,
       origen: 'importado',
       notas: '',
+      ...(destino ? { destino } : {}),
     })
   }
   return { nuevos, cambios }

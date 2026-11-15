@@ -24,6 +24,7 @@ import { useStore } from '@/lib/store'
 import type { Movimiento, Tipo } from '@/lib/types'
 import { categorizar, fmtCLP, hoy, mesActual, soloDigitos } from '@/lib/util'
 import { cn } from '@/lib/utils'
+import { destinoDe } from '@/lib/cuentas'
 
 interface Props {
   abierto: boolean
@@ -41,6 +42,7 @@ export function EditorMovimiento({ abierto, mov, mes, onOpenChange, onGuardado }
   const [descripcion, setDescripcion] = useState('')
   const [categoria, setCategoria] = useState('')
   const [cuenta, setCuenta] = useState('')
+  const [destino, setDestino] = useState('')
   const [fecha, setFecha] = useState(hoy())
   const [notas, setNotas] = useState('')
   const categoriaManual = useRef(false)
@@ -64,6 +66,7 @@ export function EditorMovimiento({ abierto, mov, mes, onOpenChange, onGuardado }
       setDescripcion(mov.descripcion || '')
       setCategoria(mov.categoria || porDefecto(mov.tipo, mov.descripcion))
       setCuenta(mov.cuenta || cfg.cuentas[0])
+      setDestino(destinoDe(mov, cfg.cuentas))
       setFecha(mov.fecha)
       setNotas(mov.notas || '')
       categoriaManual.current = true
@@ -73,6 +76,7 @@ export function EditorMovimiento({ abierto, mov, mes, onOpenChange, onGuardado }
       setDescripcion('')
       setCategoria(porDefecto('gasto', ''))
       setCuenta(cfg.cuentas[0])
+      setDestino('')
       setFecha(mes === mesActual() ? hoy() : `${mes}-01`)
       setNotas('')
       categoriaManual.current = false
@@ -111,6 +115,7 @@ export function EditorMovimiento({ abierto, mov, mes, onOpenChange, onGuardado }
       descripcion: descripcion.trim(),
       categoria: tipo === 'traspaso' ? 'Traspaso' : categoria,
       cuenta,
+      destino: tipo === 'traspaso' ? destino : '',
       notas: notas.trim(),
     })
     onOpenChange(false)
@@ -171,9 +176,22 @@ export function EditorMovimiento({ abierto, mov, mes, onOpenChange, onGuardado }
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
-                <Label>Categoría</Label>
+                <Label>{tipo === 'traspaso' ? 'Hacia' : 'Categoría'}</Label>
                 {tipo === 'traspaso' ? (
-                  <Input value="Traspaso" disabled />
+                  <Select value={destino} onValueChange={setDestino}>
+                    <SelectTrigger id="e-destino">
+                      <SelectValue placeholder="Elegir cuenta" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {[...new Set([...cfg.cuentas, destino].filter(Boolean))]
+                        .filter((c) => c !== cuenta)
+                        .map((c) => (
+                          <SelectItem key={c} value={c}>
+                            {c}
+                          </SelectItem>
+                        ))}
+                    </SelectContent>
+                  </Select>
                 ) : (
                   <Select
                     value={categoria}
@@ -198,7 +216,7 @@ export function EditorMovimiento({ abierto, mov, mes, onOpenChange, onGuardado }
                 )}
               </div>
               <div className="space-y-1.5">
-                <Label>Cuenta</Label>
+                <Label>{tipo === 'traspaso' ? 'Desde' : 'Cuenta'}</Label>
                 <Select value={cuenta} onValueChange={setCuenta}>
                   <SelectTrigger id="e-cuenta">
                     <SelectValue />

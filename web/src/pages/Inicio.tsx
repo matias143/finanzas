@@ -193,7 +193,7 @@ export function Inicio() {
   const hor = hormiga(movs, mes, cfg.umbralHormiga)
   const rec = recurrentes(movs, mes)
   const alertas = presupuestos(movs, mes, cfg.categorias).filter((p) => p.limite && (p.pct ?? 0) >= 0.8)
-  const aho = ahorro(movs, mes, cfg.patronAhorro)
+  const aho = ahorro(movs, mes, cfg.patronAhorro, cfg.cuentas)
 
   return (
     <div className="space-y-3">
