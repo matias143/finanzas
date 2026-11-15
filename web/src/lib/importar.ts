@@ -414,7 +414,7 @@ function hash(s: string) {
   return h.toString(36)
 }
 
-export type EstadoImport = 'nuevo' | 'completa' | 'duplicado' | 'importado'
+export type EstadoImport = 'nuevo' | 'completa' | 'corrige' | 'duplicado' | 'importado'
 export interface FilaComparada extends FilaImportada {
   id: string
   estado: EstadoImport
@@ -444,9 +444,14 @@ export function comparar(filas: FilaImportada[], existentes: Movimiento[], todos
     if (todosLosIds.has(r.id)) return
     for (const m of libres) {
       if (m.monto !== r.monto) continue
-      if (!(m.tipo === r.tipo || m.tipo === 'traspaso' || r.tipo === 'traspaso')) continue
+      // Un movimiento que entró solo (correo o notificación) como ingreso pero el banco dice gasto
+      // (o al revés) también es el mismo: la cartola manda y lo corrige.
+      const cuentaR = normalizar(r.cuentaPropia || r.cuentaOrigen)
+      const mismaCuenta = !cuentaR || !m.cuenta || normalizar(m.cuenta) === cuentaR
+      const opuesto = m.tipo !== r.tipo && m.tipo !== 'traspaso' && r.tipo !== 'traspaso' && (m.origen === 'gmail' || m.origen === 'notif') && mismaCuenta
+      if (!(m.tipo === r.tipo || m.tipo === 'traspaso' || r.tipo === 'traspaso' || opuesto)) continue
       const d = diasEntre(m.fecha, r.fecha)
-      if (d <= 7) parejas.push({ i, m, d: d + (m.tipo === r.tipo ? 0 : 0.5) })
+      if (d <= 7) parejas.push({ i, m, d: d + (m.tipo === r.tipo ? 0 : opuesto ? 1 : 0.5) })
     }
   })
   parejas.sort((a, b) => a.d - b.d)
@@ -462,6 +467,8 @@ export function comparar(filas: FilaImportada[], existentes: Movimiento[], todos
     if (todosLosIds.has(r.id)) return { ...r, estado: 'importado' as const }
     const igual = pareja.get(i)
     if (!igual) return { ...r, estado: 'nuevo' as const }
+    const opuesto = igual.tipo !== r.tipo && igual.tipo !== 'traspaso' && r.tipo !== 'traspaso'
+    if (opuesto) return { ...r, estado: 'corrige' as const, existente: igual }
     const completa = r.tipo === igual.tipo && r.tipo !== 'traspaso' && Boolean(r.catOrigen) && GENERICAS.test(normalizar(igual.categoria))
     return { ...r, estado: completa ? ('completa' as const) : ('duplicado' as const), existente: igual }
   })
@@ -487,6 +494,11 @@ export function construir(
 
     if (r.estado === 'completa' && r.existente) {
       cambios.push({ id: r.existente.id, categoria })
+      continue
+    }
+    if (r.estado === 'corrige' && r.existente) {
+      // Se corrige gasto↔ingreso; la descripción del correo (nombre de la persona) se conserva.
+      cambios.push({ id: r.existente.id, tipo: r.tipo, categoria })
       continue
     }
     let descripcion = r.descripcion

@@ -18,6 +18,7 @@ import { cn } from '@/lib/utils'
 const CHIP: Record<EstadoImport, [string, string]> = {
   nuevo: ['Nuevo', 'text-primary'],
   completa: ['Completa categoría', 'text-warning'],
+  corrige: ['Corrige gasto/ingreso', 'text-warning'],
   duplicado: ['Ya existe', 'text-muted-foreground'],
   importado: ['Ya importado', 'text-muted-foreground'],
 }
@@ -52,7 +53,7 @@ export function Importador({ nombre, datos, onClose }: { nombre: string; datos: 
     Object.fromEntries([...grupos.entries()].map(([k, g]) => [k, sugerirCategoria(g.nombre, g.tipo, cfg)])),
   )
   const [mapaCuenta, setMapaCuenta] = useState<Record<string, string>>(() => Object.fromEntries(cuentasOrigen.map((c) => [c, sugerirCuenta(c, cfg.cuentas)])))
-  const [elegidas, setElegidas] = useState(() => new Set(filas.filter((r) => r.estado === 'nuevo' || r.estado === 'completa').map((r) => r.id)))
+  const [elegidas, setElegidas] = useState(() => new Set(filas.filter((r) => r.estado === 'nuevo' || r.estado === 'completa' || r.estado === 'corrige').map((r) => r.id)))
 
   const cuenta = (e: EstadoImport) => filas.filter((r) => r.estado === e).length
   const fechas = filas.map((r) => r.fecha).sort()
@@ -109,8 +110,8 @@ export function Importador({ nombre, datos, onClose }: { nombre: string; datos: 
             <Card className="gap-0 py-3">
               <CardContent className="px-3.5">
                 <div className="text-muted-foreground text-xs">Ya en la app</div>
-                <div className="num text-xl font-semibold">{cuenta('duplicado') + cuenta('completa') + cuenta('importado')}</div>
-                <div className="text-muted-foreground text-xs">{cuenta('completa') ? `${cuenta('completa')} sin categoría: se completa` : 'se omiten'}</div>
+                <div className="num text-xl font-semibold">{cuenta('duplicado') + cuenta('completa') + cuenta('corrige') + cuenta('importado')}</div>
+                <div className="text-muted-foreground text-xs">{[cuenta('completa') && `${cuenta('completa')} sin categoría: se completa`, cuenta('corrige') && `${cuenta('corrige')} al revés: se corrige`].filter(Boolean).join(' · ') || 'se omiten'}</div>
               </CardContent>
             </Card>
           </div>

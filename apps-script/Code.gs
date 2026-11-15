@@ -448,7 +448,8 @@ function extraerContraparte_(t, tipo) {
 }
 
 function limpiar_(s) {
-  return String(s || '').replace(/\s+/g, ' ').replace(/^[\s:,-]+|[\s:,.-]+$/g, '').slice(0, 60);
+  // Los correos de Mercado Pago marcan nombres en negrita con *asteriscos*: se quitan.
+  return String(s || '').replace(/[*_]+/g, '').replace(/\s+/g, ' ').replace(/^[\s:,-]+|[\s:,.-]+$/g, '').slice(0, 60);
 }
 
 function normalizar_(s) {
