@@ -5,6 +5,7 @@ import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Toaster } from '@/components/ui/sonner'
 import { EditorMovimiento } from '@/components/EditorMovimiento'
+import { Proteccion } from '@/components/Proteccion'
 import { Inicio } from '@/pages/Inicio'
 import { Movimientos } from '@/pages/Movimientos'
 import { Presupuesto } from '@/pages/Presupuesto'
@@ -76,7 +77,9 @@ export default function App() {
     }
   }, [abrirEditor])
 
-  useEffect(() => window.scrollTo(0, 0), [ruta])
+  useEffect(() => {
+    window.scrollTo(0, 0)
+  }, [ruta])
 
   const conMes = ruta !== 'ajustes'
   const [izq, der] = NAV.length === 4 ? [NAV.slice(0, 2), NAV.slice(2)] : [NAV, []]
@@ -99,10 +102,12 @@ export default function App() {
       </header>
 
       <main className="mx-auto max-w-xl px-4 pt-1 pb-28">
-        {ruta === 'inicio' && <Inicio />}
-        {ruta === 'movimientos' && <Movimientos />}
-        {ruta === 'presupuesto' && <Presupuesto />}
-        {ruta === 'ajustes' && <Ajustes />}
+        <Proteccion clave={ruta + mes}>
+          {ruta === 'inicio' && <Inicio />}
+          {ruta === 'movimientos' && <Movimientos />}
+          {ruta === 'presupuesto' && <Presupuesto />}
+          {ruta === 'ajustes' && <Ajustes />}
+        </Proteccion>
       </main>
 
       <nav className="pb-safe bg-card fixed inset-x-0 bottom-0 z-30 border-t" aria-label="Secciones">

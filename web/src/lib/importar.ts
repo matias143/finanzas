@@ -12,39 +12,72 @@ type Fila = Celda[]
 /** Devuelve las filas de la hoja principal como arreglos de celdas. */
 export async function leerArchivo(file: File): Promise<Fila[]> {
   const XLSX = await import('xlsx')
-  const wb = XLSX.read(await file.arrayBuffer(), { type: 'array', cellDates: true })
+  const buf = await file.arrayBuffer()
+  let wb
+  if (/\.(csv|txt|tsv)$/i.test(file.name) || /csv|text\/plain/.test(file.type)) {
+    // CSV: se lee como texto sin convertir nada, para que "05-11-2026" y "10.990" se lean al estilo chileno.
+    let texto = new TextDecoder('utf-8').decode(buf)
+    if (texto.includes('\uFFFD')) texto = new TextDecoder('windows-1252').decode(buf) // archivos con tildes en formato antiguo
+    wb = XLSX.read(texto, { type: 'string', raw: true })
+  } else {
+    wb = XLSX.read(buf, { type: 'array', cellDates: true })
+  }
   const nombre = wb.SheetNames.find((n) => /registros|records|movimientos|transacciones/i.test(n)) || wb.SheetNames[0]
   return XLSX.utils.sheet_to_json<Fila>(wb.Sheets[nombre], { header: 1, raw: true, defval: '' })
 }
 
 // ---------- Interpretación ----------
 
+// Primero se buscan nombres exactos; si no hay, nombres que contengan la palabra.
 const COLUMNAS = {
-  fecha: /^(fecha|date|fecha (de )?(operacion|transaccion|contable|movimiento))$/,
-  monto: /^(monto|amount|importe|valor|monto \$|monto clp)$/,
-  cargo: /^(cargos?|debitos?|egresos?|retiros?|giros?|cargos \$|monto cargo)$/,
-  abono: /^(abonos?|creditos?|ingresos?|depositos?|abonos \$|monto abono)$/,
-  descripcion: /^(descripcion|detalle|glosa|note|nota|notas|concepto|movimiento|comercio|descripcion movimiento|detalle movimiento)$/,
+  fecha: /^(fecha|date|dia|fecha (de )?(operacion|transaccion|contable|movimiento|compra|pago|liberacion|origen)|release date|transaction date)$/,
+  monto: /^(monto|amount|importe|valor|monto \$|monto clp|monto total|total|transaction amount|transaction net amount|net amount|monto neto|monto bruto)$/,
+  cargo: /^(cargos?|debitos?|egresos?|retiros?|giros?|cargos \$|monto cargo|cargos clp)$/,
+  abono: /^(abonos?|creditos?|ingresos?|depositos?|abonos \$|monto abono|abonos clp)$/,
+  descripcion: /^(descripcion|detalle|glosa|note|nota|notas|concepto|movimiento|comercio|descripcion movimiento|detalle movimiento|transaction type|tipo de operacion|descripcion operacion)$/,
   payee: /^(payee|beneficiario|destinatario)$/,
   categoria: /^(category|categoria)$/,
   cuenta: /^(account|cuenta)$/,
   tipo: /^(type|tipo)$/,
   transfer: /^(transfer|traspaso)$/,
 }
+const PARECIDAS: Partial<Record<keyof typeof COLUMNAS, RegExp>> = {
+  fecha: /fecha|date/,
+  monto: /monto|amount|importe|valor/,
+  cargo: /cargo|debito|egreso|retiro/,
+  abono: /abono|credito|deposito/,
+  descripcion: /descrip|detalle|glosa|concepto|comercio|operacion|referencia/,
+}
+// Columnas que nunca son la fecha o el monto del movimiento.
+const NUNCA = /saldo|balance|venc|cuota|disponible|tasa|interes|n de|numero|documento|sucursal|id$/
+
 type Columna = keyof typeof COLUMNAS
 
 function detectarEncabezado(filas: Fila[]) {
-  for (let i = 0; i < Math.min(filas.length, 25); i++) {
+  for (let i = 0; i < Math.min(filas.length, 60); i++) {
     const cols: Partial<Record<Columna, number>> = {}
-    filas[i].forEach((c, j) => {
-      const n = normalizar(c)
+    const celdas = (filas[i] || []).map((c) => normalizar(c))
+    celdas.forEach((n, j) => {
       for (const [k, re] of Object.entries(COLUMNAS) as [Columna, RegExp][]) if (cols[k] === undefined && re.test(n)) cols[k] = j
+    })
+    celdas.forEach((n, j) => {
+      if (!n || NUNCA.test(n) || Object.values(cols).includes(j)) return
+      for (const [k, re] of Object.entries(PARECIDAS) as [Columna, RegExp][]) if (cols[k] === undefined && re.test(n)) cols[k] = j
     })
     if (cols.fecha !== undefined && (cols.monto !== undefined || cols.cargo !== undefined || cols.abono !== undefined)) {
       return { fila: i, cols }
     }
   }
   return null
+}
+
+/** Primeras filas con contenido, para mostrar en el error y saber qué trae el archivo. */
+function muestra(filas: Fila[]) {
+  return filas
+    .filter((f) => f && f.some((c) => c !== '' && c != null))
+    .slice(0, 3)
+    .map((f) => f.filter((c) => c !== '' && c != null).map((c) => String(c).slice(0, 25)).join(' | '))
+    .join(' ⏎ ')
 }
 
 const dos = (n: number | string) => String(n).padStart(2, '0')
@@ -105,7 +138,7 @@ export interface ArchivoInterpretado {
 /** Convierte las filas del archivo en movimientos "crudos". */
 export function interpretar(filas: Fila[]): ArchivoInterpretado {
   const enc = detectarEncabezado(filas)
-  if (!enc) throw new Error('No encontré columnas de fecha y monto en el archivo.')
+  if (!enc) throw new Error(`No encontré columnas de fecha y monto. El archivo empieza con: ${muestra(filas) || '(vacío)'}`)
   const { cols } = enc
   const celda = (f: Fila, k: Columna): Celda => (cols[k] === undefined ? '' : f[cols[k]!])
   const esWallet = (['cuenta', 'categoria', 'tipo', 'transfer'] as Columna[]).every((k) => cols[k] !== undefined)
@@ -267,7 +300,8 @@ export function comparar(filas: FilaImportada[], existentes: Movimiento[], todos
     return { ...r, id: 'imp_' + hash(clave + '|' + n) }
   })
 
-  // Emparejar con lo existente: mismo monto, ±2 días. Primero las parejas más cercanas en fecha.
+  // Emparejar con lo existente: mismo monto exacto, hasta 7 días de diferencia (los bancos a veces
+  // registran la compra días después). Primero las parejas más cercanas en fecha.
   const parejas: { i: number; m: Movimiento; d: number }[] = []
   conId.forEach((r, i) => {
     if (todosLosIds.has(r.id)) return
@@ -275,7 +309,7 @@ export function comparar(filas: FilaImportada[], existentes: Movimiento[], todos
       if (m.monto !== r.monto) continue
       if (!(m.tipo === r.tipo || m.tipo === 'traspaso' || r.tipo === 'traspaso')) continue
       const d = diasEntre(m.fecha, r.fecha)
-      if (d <= 2) parejas.push({ i, m, d: d + (m.tipo === r.tipo ? 0 : 0.5) })
+      if (d <= 7) parejas.push({ i, m, d: d + (m.tipo === r.tipo ? 0 : 0.5) })
     }
   })
   parejas.sort((a, b) => a.d - b.d)
