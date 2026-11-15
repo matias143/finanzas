@@ -260,16 +260,23 @@ export function interpretar(filas: Fila[]): ArchivoInterpretado {
       transfer === true || transfer === 1 || /^(1|true|si|verdadero)$/i.test(String(transfer)) || /^transfer$/i.test(String(celda(f, 'categoria')))
     const glosa = String(celda(f, 'descripcion') || celda(f, 'payee') || celda(f, 'concepto') || '').trim()
     const concepto = normalizar(celda(f, 'concepto'))
-    const { descripcion: desc, rut, transferencia } = esWallet ? { descripcion: glosa, rut: '', transferencia: false } : limpiarGlosa(glosa)
+    const limpia = esWallet ? { descripcion: glosa, rut: '', transferencia: false } : limpiarGlosa(glosa)
+    let desc = limpia.descripcion
+    const { rut } = limpia
     let catSugerida: string | undefined
     let esPropia = false
-    const esTransf = transferencia || /transferencia/.test(concepto)
+    // Mercado Pago anota parte de la rentabilidad diaria como "Transferencia recibida" sin nombre:
+    // es rentabilidad, no una transferencia de alguien.
+    const rentabilidadSinNombre =
+      banco === 'Mercado Pago' && tipo === 'ingreso' && /transferencia recibida/.test(concepto) && !String(celda(f, 'payee') || '').trim()
+    if (rentabilidadSinNombre) desc = 'Rentabilidad'
+    const esTransf = !rentabilidadSinNombre && (limpia.transferencia || /transferencia/.test(concepto))
     if (esTransf) {
       // "021124853K Transf a Mercado pago": si el número es tu RUT, la plata va a una cuenta tuya.
       // En Mercado Pago no hay RUT: si el nombre de la contraparte es el del titular, también es tuya.
       esPropia = Boolean(rutTitular && rut && rut === rutTitular) || mismoTitular(desc)
       catSugerida = tipo === 'ingreso' ? 'Transferencias recibidas' : 'Transferencias'
-    } else if (/rentabilidad|intereses|rendimiento/.test(concepto + ' ' + normalizar(glosa))) {
+    } else if (rentabilidadSinNombre || /rentabilidad|intereses|rendimiento/.test(concepto + ' ' + normalizar(glosa))) {
       catSugerida = 'Otros ingresos'
     }
     if (esPropia) tipo = 'traspaso'
