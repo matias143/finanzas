@@ -11,8 +11,12 @@ type Fila = Celda[]
 
 /** Devuelve las filas de la hoja principal como arreglos de celdas. */
 export async function leerArchivo(file: File): Promise<Fila[]> {
-  const XLSX = await import('xlsx')
   const buf = await file.arrayBuffer()
+  if (/\.pdf$/i.test(file.name) || file.type === 'application/pdf') {
+    const { leerPdf } = await import('./pdf')
+    return leerPdf(buf)
+  }
+  const XLSX = await import('xlsx')
   let wb
   if (/\.(csv|txt|tsv)$/i.test(file.name) || /csv|text\/plain/.test(file.type)) {
     // CSV: se lee como texto sin convertir nada, para que "05-11-2026" y "10.990" se lean al estilo chileno.
@@ -35,7 +39,8 @@ const COLUMNAS = {
   cargo: /^(cargos?|debitos?|egresos?|retiros?|giros?|cargos \$|monto cargo|cargos clp)$/,
   abono: /^(abonos?|creditos?|ingresos?|depositos?|abonos \$|monto abono|abonos clp)$/,
   descripcion: /^(descripcion|detalle|glosa|note|nota|notas|concepto|movimiento|comercio|descripcion movimiento|detalle movimiento|transaction type|tipo de operacion|descripcion operacion)$/,
-  payee: /^(payee|beneficiario|destinatario)$/,
+  payee: /^(payee|beneficiario|destinatario|nombre del comercio|comercio|contraparte)$/,
+  concepto: /^(tipo de transaccion|tipo de operacion|transaction type|concepto|tipo de movimiento detallado)$/,
   categoria: /^(category|categoria)$/,
   cuenta: /^(account|cuenta)$/,
   tipo: /^(type|tipo)$/,
@@ -49,7 +54,7 @@ const PARECIDAS: Partial<Record<keyof typeof COLUMNAS, RegExp>> = {
   descripcion: /descrip|detalle|glosa|concepto|comercio|operacion|referencia/,
 }
 // Columnas que nunca son la fecha o el monto del movimiento.
-const NUNCA = /saldo|balance|venc|cuota|disponible|tasa|interes|n de|numero|documento|sucursal|id$/
+const NUNCA = /saldo|balance|venc|cuota|disponible|tasa|interes|n de|numero|documento|sucursal|id$|otros conceptos|comision|retencion|moneda|id de/
 
 type Columna = keyof typeof COLUMNAS
 
@@ -98,7 +103,8 @@ export function limpiarGlosa(glosa: string) {
   const tr = x.match(/^transf(?:erencia)?\.?\s*(?:a|de|desde|hacia|para)?\s+(.+)$/i)
   if (tr) {
     transferencia = true
-    x = tr[1]
+    // "Transferencia recibida" (sin nombre) se deja tal cual
+    if (!/^(recibida|enviada|realizada|exitosa)$/i.test(tr[1].trim())) x = tr[1]
   }
   x = x.replace(/^(compras?|pagos?|cargos?)(\s+recurrentes?)?(\s+(nacional|internacional|nac|int))?(\s+(vd|vc|cd|tc|td|debito|credito))?\s+/i, '')
   x = x.replace(PROCESADORES, '')
@@ -221,6 +227,13 @@ export function interpretar(filas: Fila[]): ArchivoInterpretado {
         ? 'BancoEstado'
         : ''
 
+  // Palabras del nombre del titular (vienen en la cabecera: "Sr(a) MANCILLA CARDENAS MATIAS EDUARDO").
+  const palabrasCabecera = new Set(textoCabecera.split(' ').filter((w) => w.length >= 4))
+  const mismoTitular = (nombre: string) => {
+    const p = normalizar(nombre).split(' ').filter((w) => w.length >= 4)
+    return p.length >= 2 && p.filter((w) => palabrasCabecera.has(w)).length >= 2
+  }
+
   const crudos: FilaImportada[] = []
   let omitidas = 0
   for (const f of filas.slice(enc.fila + 1)) {
@@ -245,14 +258,19 @@ export function interpretar(filas: Fila[]): ArchivoInterpretado {
     const transfer = celda(f, 'transfer')
     const esTransfer =
       transfer === true || transfer === 1 || /^(1|true|si|verdadero)$/i.test(String(transfer)) || /^transfer$/i.test(String(celda(f, 'categoria')))
-    const glosa = String(celda(f, 'descripcion') || celda(f, 'payee') || '').trim()
+    const glosa = String(celda(f, 'descripcion') || celda(f, 'payee') || celda(f, 'concepto') || '').trim()
+    const concepto = normalizar(celda(f, 'concepto'))
     const { descripcion: desc, rut, transferencia } = esWallet ? { descripcion: glosa, rut: '', transferencia: false } : limpiarGlosa(glosa)
     let catSugerida: string | undefined
     let esPropia = false
-    if (transferencia) {
+    const esTransf = transferencia || /transferencia/.test(concepto)
+    if (esTransf) {
       // "021124853K Transf a Mercado pago": si el número es tu RUT, la plata va a una cuenta tuya.
-      esPropia = Boolean(rutTitular && rut && rut === rutTitular)
+      // En Mercado Pago no hay RUT: si el nombre de la contraparte es el del titular, también es tuya.
+      esPropia = Boolean(rutTitular && rut && rut === rutTitular) || mismoTitular(desc)
       catSugerida = tipo === 'ingreso' ? 'Transferencias recibidas' : 'Transferencias'
+    } else if (/rentabilidad|intereses|rendimiento/.test(concepto + ' ' + normalizar(glosa))) {
+      catSugerida = 'Otros ingresos'
     }
     if (esPropia) tipo = 'traspaso'
 
@@ -262,12 +280,29 @@ export function interpretar(filas: Fila[]): ArchivoInterpretado {
       montoConSigno: monto,
       monto: Math.abs(monto),
       tipo,
-      descripcion: esPropia ? `Traspaso ${monto < 0 ? 'a' : 'desde'} ${desc}` : desc,
+      descripcion: esPropia ? (mismoTitular(desc) ? `Traspaso ${monto < 0 ? 'a' : 'desde'} cuenta propia` : `Traspaso ${monto < 0 ? 'a' : 'desde'} ${desc}`) : desc,
       catSugerida,
       catOrigen: String(celda(f, 'categoria') || '').trim(),
       cuentaOrigen: String(celda(f, 'cuenta') || '').trim() || banco,
       esTransfer,
     })
+  }
+
+  // Rentabilidad de Mercado Pago: llegan varios abonos chicos al día; se juntan en uno por día.
+  const porDia = new Map<string, FilaImportada>()
+  for (let i = crudos.length - 1; i >= 0; i--) {
+    const r = crudos[i]
+    if (r.tipo !== 'ingreso' || !/rentabilidad|rendimiento|intereses/i.test(r.descripcion)) continue
+    const k = r.fecha + '|' + r.cuentaOrigen
+    const previa = porDia.get(k)
+    if (previa) {
+      previa.monto += r.monto
+      previa.montoConSigno += r.montoConSigno
+      crudos.splice(i, 1)
+    } else {
+      r.descripcion = 'Rentabilidad' + (r.cuentaOrigen ? ' ' + r.cuentaOrigen : '')
+      porDia.set(k, r)
+    }
   }
 
   // Traspasos de Wallet: vienen en pares (sale de una cuenta y entra a otra). Se dejan en uno solo.

@@ -305,7 +305,7 @@ function ImportarYRespaldo() {
         <CardHeader>
           <CardTitle>Importar movimientos</CardTitle>
           <CardDescription>
-            Desde un Excel o CSV: exportación de Wallet u otra app, o cartola del banco. Verás una vista previa antes de guardar y no se duplica lo que ya
+            Desde un Excel, CSV o PDF: exportación de Wallet, cartola de Santander o resumen de Mercado Pago. Verás una vista previa antes de guardar y no se duplica lo que ya
             tienes.
           </CardDescription>
         </CardHeader>
@@ -314,14 +314,14 @@ function ImportarYRespaldo() {
             ref={xls}
             type="file"
             hidden
-            accept=".xls,.xlsx,.csv,.txt,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv"
+            accept=".xls,.xlsx,.csv,.txt,.pdf,application/pdf,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv"
             onChange={(e) => {
               elegirXls(e.target.files?.[0])
               e.target.value = ''
             }}
           />
           <Button className="w-full" onClick={() => xls.current?.click()}>
-            <FileSpreadsheet /> Elegir archivo Excel / CSV
+            <FileSpreadsheet /> Elegir archivo Excel, CSV o PDF
           </Button>
         </CardFooter>
       </Card>
