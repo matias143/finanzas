@@ -280,7 +280,13 @@ function ImportarYRespaldo() {
       setArchivo({ nombre: f.name, datos })
       toast.dismiss(id)
     } catch (e) {
-      toast.error('Error: ' + (e instanceof Error ? e.message : String(e)), { id })
+      const msg = e instanceof Error ? e.message : String(e)
+      if (/dynamically imported module|Importing a module script failed|error loading dynamically/i.test(msg)) {
+        toast.message('Hay una versión nueva de la app. Recargando… vuelve a elegir el archivo.', { id })
+        setTimeout(() => location.reload(), 1200)
+        return
+      }
+      toast.error('Error: ' + msg, { id })
     }
   }
   const restaurar = async (f?: File) => {

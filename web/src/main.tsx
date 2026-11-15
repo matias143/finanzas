@@ -11,6 +11,30 @@ const aplicarTema = () => document.documentElement.classList.toggle('dark', oscu
 aplicarTema()
 oscuro.addEventListener('change', aplicarTema)
 
+// Si se publicó una versión nueva mientras la app estaba abierta, los archivos antiguos ya no existen:
+// se recarga una vez para tomar la versión nueva (en vez de mostrar un error).
+function recargarPorVersionNueva() {
+  try {
+    if (sessionStorage.getItem('recarga-version')) return false
+    sessionStorage.setItem('recarga-version', '1')
+  } catch {
+    /* sin almacenamiento: se recarga igual */
+  }
+  location.reload()
+  return true
+}
+window.addEventListener('vite:preloadError', (e) => {
+  e.preventDefault()
+  recargarPorVersionNueva()
+})
+setTimeout(() => {
+  try {
+    sessionStorage.removeItem('recarga-version')
+  } catch {
+    /* nada */
+  }
+}, 15000)
+
 store.cargar().then(() => {
   createRoot(document.getElementById('root')!).render(
     <StrictMode>
