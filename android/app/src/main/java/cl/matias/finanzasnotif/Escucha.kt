@@ -1,6 +1,7 @@
 package cl.matias.finanzasnotif
 
 import android.app.Notification
+import android.content.ComponentName
 import android.content.pm.PackageManager
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
@@ -9,9 +10,20 @@ import java.security.MessageDigest
 /** Servicio que Android llama con cada notificación nueva. */
 class Escucha : NotificationListenerService() {
 
+    override fun onListenerConnected() {
+        Ajustes(this).ultimaConexion = System.currentTimeMillis()
+        Vigia.programar(this)
+    }
+
+    // Android (sobre todo Xiaomi) a veces desconecta el servicio: se pide volver a conectarlo.
+    override fun onListenerDisconnected() {
+        requestRebind(ComponentName(this, Escucha::class.java))
+    }
+
     override fun onNotificationPosted(sbn: StatusBarNotification) {
-        if (sbn.packageName == packageName) return
         val ajustes = Ajustes(this)
+        ajustes.ultimaSenal = System.currentTimeMillis()
+        if (sbn.packageName == packageName) return
         if (!ajustes.configurado) return
 
         val n = sbn.notification ?: return

@@ -1,7 +1,6 @@
 package cl.matias.finanzasnotif
 
 import android.app.Activity
-import android.content.ComponentName
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.Typeface
@@ -48,7 +47,13 @@ class MainActivity : Activity() {
         raiz.addView(boton("Dar acceso a notificaciones") {
             startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
         })
-        raiz.addView(boton("Que la batería no la detenga", secundario = true) { pedirBateria() }.margen(abajo = 20))
+        raiz.addView(boton("Que la batería no la detenga", secundario = true) { pedirBateria() })
+        raiz.addView(boton("Reconectar servicio", secundario = true) {
+            Vigia.reconectar(this, forzar = true)
+            aviso("Reconectando… vuelve a abrir esta pantalla en unos segundos")
+            estado.postDelayed({ pintar() }, 3000)
+        })
+        raiz.addView(texto("En Xiaomi/Redmi/POCO: en la ficha de la app activa también \"Inicio automático\", y en Recientes deja la app bloqueada con el candado.", 12f, gris = true).margen(arriba = 8, abajo = 20))
 
         raiz.addView(titulo("Conexión"))
         val url = campo("URL de Apps Script (termina en /exec)", ajustes.url)
@@ -72,7 +77,20 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        Vigia.programar(this)
+        if (tieneAcceso()) Vigia.reconectar(this, forzar = false)
         pintar()
+    }
+
+    private fun hace(ms: Long): String {
+        if (ms == 0L) return "nunca"
+        val min = (System.currentTimeMillis() - ms) / 60000
+        return when {
+            min < 1 -> "recién"
+            min < 60 -> "hace $min min"
+            min < 48 * 60 -> "hace ${min / 60} h"
+            else -> "hace ${min / (24 * 60)} días"
+        }
     }
 
     private fun pintar() {
@@ -84,6 +102,9 @@ class MainActivity : Activity() {
             append(if (bateria) "✓ Sin restricción de batería" else "• La batería podría pausarla (recomendado quitar)")
             append("\n")
             append(if (ajustes.configurado) "✓ Conexión configurada" else "✗ Falta la URL y la clave")
+            append("\n\n")
+            append("Servicio conectado: ${hace(ajustes.ultimaConexion)}\n")
+            append("Última notificación vista (de cualquier app): ${hace(ajustes.ultimaSenal)}")
         }
         estado.setTextColor(if (permiso && ajustes.configurado) verde else Color.parseColor("#d9604a"))
 
@@ -99,11 +120,7 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun tieneAcceso(): Boolean {
-        val activos = Settings.Secure.getString(contentResolver, "enabled_notification_listeners") ?: return false
-        val yo = ComponentName(this, Escucha::class.java)
-        return activos.split(":").any { ComponentName.unflattenFromString(it) == yo }
-    }
+    private fun tieneAcceso() = Vigia.tieneAcceso(this)
 
     private fun pedirBateria() {
         // Abre la ficha de la app en Ajustes: ahí está "Batería" → "Sin restricciones".

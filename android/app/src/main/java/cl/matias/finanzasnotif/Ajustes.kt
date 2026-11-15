@@ -26,6 +26,16 @@ class Ajustes(context: Context) {
 
     val configurado get() = url.startsWith("https://") && clave.isNotEmpty()
 
+    /** Última vez que Android entregó cualquier notificación al servicio (prueba de que está escuchando). */
+    var ultimaSenal: Long
+        get() = p.getLong("ultimaSenal", 0)
+        set(v) = p.edit().putLong("ultimaSenal", v).apply()
+
+    /** Última vez que Android conectó el servicio. */
+    var ultimaConexion: Long
+        get() = p.getLong("ultimaConexion", 0)
+        set(v) = p.edit().putLong("ultimaConexion", v).apply()
+
     /** Evita mandar dos veces la misma notificación (Android la vuelve a publicar al actualizarla). Devuelve true si es nueva. */
     @Synchronized
     fun esNueva(huella: String): Boolean {
