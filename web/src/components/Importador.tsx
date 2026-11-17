@@ -18,7 +18,7 @@ import { cn } from '@/lib/utils'
 const CHIP: Record<EstadoImport, [string, string]> = {
   nuevo: ['Nuevo', 'text-primary'],
   completa: ['Completa categoría', 'text-warning'],
-  corrige: ['Corrige gasto/ingreso', 'text-warning'],
+  corrige: ['Se corrige (monto o tipo)', 'text-warning'],
   duplicado: ['Ya existe', 'text-muted-foreground'],
   importado: ['Ya importado', 'text-muted-foreground'],
 }
@@ -111,7 +111,7 @@ export function Importador({ nombre, datos, onClose }: { nombre: string; datos: 
               <CardContent className="px-3.5">
                 <div className="text-muted-foreground text-xs">Ya en la app</div>
                 <div className="num text-xl font-semibold">{cuenta('duplicado') + cuenta('completa') + cuenta('corrige') + cuenta('importado')}</div>
-                <div className="text-muted-foreground text-xs">{[cuenta('completa') && `${cuenta('completa')} sin categoría: se completa`, cuenta('corrige') && `${cuenta('corrige')} al revés: se corrige`].filter(Boolean).join(' · ') || 'se omiten'}</div>
+                <div className="text-muted-foreground text-xs">{[cuenta('completa') && `${cuenta('completa')} sin categoría: se completa`, cuenta('corrige') && `${cuenta('corrige')} se corrige${cuenta('corrige') === 1 ? '' : 'n'}`].filter(Boolean).join(' · ') || 'se omiten'}</div>
               </CardContent>
             </Card>
           </div>

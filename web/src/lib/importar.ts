@@ -443,7 +443,9 @@ export function comparar(filas: FilaImportada[], existentes: Movimiento[], todos
   conId.forEach((r, i) => {
     if (todosLosIds.has(r.id)) return
     for (const m of libres) {
-      if (m.monto !== r.monto) continue
+      // Compras en moneda extranjera llegan con un monto aproximado (tasa del día): se aceptan ±6%.
+      const extranjera = /\b(USD|EUR)\b/.test(m.notas || '') && Math.abs(m.monto - r.monto) <= r.monto * 0.06
+      if (m.monto !== r.monto && !extranjera) continue
       // Un movimiento que entró solo (correo o notificación) como ingreso pero el banco dice gasto
       // (o al revés) también es el mismo: la cartola manda y lo corrige.
       const cuentaR = normalizar(r.cuentaPropia || r.cuentaOrigen)
@@ -468,7 +470,7 @@ export function comparar(filas: FilaImportada[], existentes: Movimiento[], todos
     const igual = pareja.get(i)
     if (!igual) return { ...r, estado: 'nuevo' as const }
     const opuesto = igual.tipo !== r.tipo && igual.tipo !== 'traspaso' && r.tipo !== 'traspaso'
-    if (opuesto) return { ...r, estado: 'corrige' as const, existente: igual }
+    if (opuesto || igual.monto !== r.monto) return { ...r, estado: 'corrige' as const, existente: igual }
     const completa = r.tipo === igual.tipo && r.tipo !== 'traspaso' && Boolean(r.catOrigen) && GENERICAS.test(normalizar(igual.categoria))
     return { ...r, estado: completa ? ('completa' as const) : ('duplicado' as const), existente: igual }
   })
@@ -497,8 +499,12 @@ export function construir(
       continue
     }
     if (r.estado === 'corrige' && r.existente) {
-      // Se corrige gasto↔ingreso; la descripción del correo (nombre de la persona) se conserva.
-      cambios.push({ id: r.existente.id, tipo: r.tipo, categoria })
+      // Se corrige gasto↔ingreso y/o el monto real cobrado (compras en dólares);
+      // la descripción y la categoría que ya tenía se conservan si el tipo no cambia.
+      const cambio: Partial<Movimiento> = { id: r.existente.id, monto: r.monto }
+      if (r.existente.tipo !== r.tipo) Object.assign(cambio, { tipo: r.tipo, categoria })
+      if (r.existente.monto !== r.monto) cambio.notas = [r.existente.notas, `monto real según cartola: ${r.monto}`].filter(Boolean).join(' · ')
+      cambios.push(cambio)
       continue
     }
     let descripcion = r.descripcion

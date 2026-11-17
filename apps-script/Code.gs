@@ -263,6 +263,38 @@ function anotarSinLeer_(ss, fuente, asunto, texto) {
   ]);
 }
 
+/**
+ * Vuelve a intentar leer lo que quedó en la pestaña "Sin leer" (útil después de mejorar el lector).
+ * Lo que ahora sí se entiende se guarda como movimiento y se quita de "Sin leer".
+ */
+function reprocesarSinLeer() {
+  const ss = libro_();
+  prepararHojas_(ss);
+  const h = ss.getSheetByName(HOJA_PENDIENTES);
+  const n = h.getLastRow();
+  if (n < 2) { Logger.log('No hay nada en "Sin leer".'); return; }
+  const config = leerConfig_(ss);
+  const filas = h.getRange(2, 1, n - 1, 4).getValues();
+  const nuevos = [];
+  const quitar = [];
+  filas.forEach(function (f, i) {
+    const fuente = String(f[1] || ''), asunto = String(f[2] || ''), texto = String(f[3] || '');
+    const datos = interpretarTexto(texto, asunto);
+    if (!datos) return;
+    const cuenta = /mercado/i.test(fuente) ? 'Mercado Pago' : /santander/i.test(fuente) ? 'Santander' : fuente.replace(/\s*\(.*\)$/, '');
+    const digest = Utilities.computeDigest(Utilities.DigestAlgorithm.MD5, 'sinleer|' + fuente + '|' + asunto + '|' + texto);
+    const id = 'sl_' + digest.map(function (b) { return ('0' + (b & 0xff).toString(16)).slice(-2); }).join('').slice(0, 16);
+    if (!idExiste_(ss, id)) {
+      const cuando = f[0] instanceof Date ? f[0] : new Date(String(f[0]).replace(' ', 'T'));
+      nuevos.push(construirMovimiento_(id, datos, cuenta, /notificaci/i.test(fuente) ? 'notif' : 'gmail', isNaN(cuando) ? new Date() : cuando, config));
+    }
+    quitar.push(i + 2);
+  });
+  if (nuevos.length) guardarMovimientos_(ss, nuevos, new Date().toISOString());
+  quitar.reverse().forEach(function (fila) { h.deleteRow(fila); });
+  Logger.log(nuevos.length + ' movimientos recuperados de "Sin leer". ' + nuevos.map(function (m) { return m.descripcion + ' $' + m.monto; }).join(', '));
+}
+
 // ============ Lectura de texto (correos y notificaciones) ============
 
 /**
@@ -273,8 +305,21 @@ function interpretarTexto(texto, asunto) {
   const crudo = arreglarTildes_(String((asunto || '') + '\n' + (texto || ''))).replace(/\u00a0/g, ' ');
   const t = crudo.replace(/[ \t]+/g, ' ');
 
-  const monto = extraerMonto_(t);
+  let monto = extraerMonto_(t);
+  let nota = '';
+  if (!monto) {
+    // Compras en dólares o euros: se convierten a pesos con el valor del día.
+    const ext = extraerMonedaExtranjera_(t);
+    if (ext) {
+      const tasa = tasaCambio_(ext.moneda);
+      if (tasa) {
+        monto = Math.round(ext.valor * tasa);
+        nota = ext.moneda + ' ' + ext.valor.toFixed(2).replace('.', ',') + ' × ' + String(Math.round(tasa * 100) / 100).replace('.', ',') + ' (valor del día, aprox.)';
+      }
+    }
+  }
   if (!monto) return null;
+  const conNota = function (r) { if (nota) r.nota = nota; return r; };
 
   const fecha = extraerFecha_(t);
 
@@ -283,7 +328,7 @@ function interpretarTexto(texto, asunto) {
   if (push) {
     push.monto = monto;
     if (fecha) push.fecha = fecha;
-    return push;
+    return conNota(push);
   }
 
   // Formatos conocidos de Santander (comprobantes por correo).
@@ -327,7 +372,8 @@ function interpretarTexto(texto, asunto) {
  */
 function interpretarPushSantander_(crudo) {
   const t = String(crudo).replace(/-\s*\n\s*/g, '').replace(/\n/g, ' ');
-  const compra = t.match(/(?:compra|cargo|pago)\s+con\s+tu\s+tarjeta\s+de\s+(d[eé]bito|cr[eé]dito)[^$]*?terminada\s+en\s+\d+\s+en\s+(.+?)\s+por\s+\$/i);
+  // "compra", "compra online", "compra internacional"… pagada en pesos ($) o en otra moneda (USD, EUR)
+  const compra = t.match(/(?:compra|cargo|pago)(?:\s+(?:online|en\s+l[ií]nea|internacional|nacional|web))?\s+con\s+tu\s+tarjeta\s+de\s+(d[eé]bito|cr[eé]dito)[^$]*?terminada\s+en\s+\d+\s+en\s+(.+?)\s+por\s+(?:\$|US\$|USD|EUR|€)/i);
   if (compra) return { tipo: 'gasto', descripcion: limpiarComercio_(compra[2]) || 'Compra con tarjeta' };
   if (/transferencia\s+hacia\s+tu\s+cuenta|abono\s+en\s+tu\s+cuenta|transferencia\s+recibida/i.test(t)) {
     const de = t.match(/\bde\s+([A-ZÁÉÍÓÚÑ][^$.\d]{2,50}?)\s+(?:por|hacia|a tu)/);
@@ -340,7 +386,7 @@ function interpretarPushSantander_(crudo) {
 function limpiarComercio_(s) {
   let x = String(s || '').split(/\s{2,}/)[0];                  // el nombre viene antes de la ciudad
   x = x.replace(/^(tuu|merpago|mercadopago|mp|sumup|payu|flow|getnet|klap|transbank|webpay|dlocal|paypal)\s*\*\s*/i, '');
-  x = x.replace(/\s+(cl|chl|chile)$/i, '').trim();
+  x = x.replace(/\s+(cl|chl|chile|us|usa)$/i, '').replace(/\s+\+?\d{6,}$/, '').replace(/\s*\*\s*/g, ' ').trim();
   if (!x) return '';
   // MAYÚSCULAS → "Tipo Título"
   if (x === x.toUpperCase()) x = x.toLowerCase().replace(/(^|[\s*\-./])([a-záéíóúñ])/g, function (m, a, b) { return a + b.toUpperCase(); });
@@ -433,10 +479,45 @@ function extraerFecha_(t) {
   return m[3] + '-' + ('0' + m[2]).slice(-2) + '-' + ('0' + m[1]).slice(-2);
 }
 
+/** "USD 23,80" / "US$ 1.234,56" / "EUR 9,99" → { moneda, valor } */
+function extraerMonedaExtranjera_(t) {
+  const m = String(t).match(/(USD|US\$|U\$S|EUR|€)\s*([0-9]{1,3}(?:\.[0-9]{3})*(?:,[0-9]{1,2})?|[0-9]+(?:[.,][0-9]{1,2})?)/i);
+  if (!m) return null;
+  let v = m[2];
+  v = /,\d{1,2}$/.test(v) ? v.replace(/\./g, '').replace(',', '.') : v.replace(/,/g, '');
+  const valor = Number(v);
+  if (!valor) return null;
+  return { moneda: /eur|€/i.test(m[1]) ? 'EUR' : 'USD', valor: valor };
+}
+
+/**
+ * Valor en pesos de 1 USD o 1 EUR (dólar/euro observado, de mindicador.cl, gratis y sin clave).
+ * Se guarda el último valor por si un día la consulta falla.
+ */
+function tasaCambio_(moneda) {
+  const cache = CacheService.getScriptCache();
+  const clave = 'tasa_' + moneda;
+  const enCache = cache.get(clave);
+  if (enCache) return Number(enCache);
+  const props = PropertiesService.getScriptProperties();
+  try {
+    const r = UrlFetchApp.fetch('https://mindicador.cl/api/' + (moneda === 'EUR' ? 'euro' : 'dolar'), { muteHttpExceptions: true });
+    const valor = JSON.parse(r.getContentText()).serie[0].valor;
+    if (valor > 0) {
+      cache.put(clave, String(valor), 6 * 60 * 60);
+      props.setProperty(clave, String(valor));
+      return valor;
+    }
+  } catch (e) { /* se usa el último valor conocido */ }
+  const ultimo = Number(props.getProperty(clave));
+  return ultimo > 0 ? ultimo : 0;
+}
+
 function extraerMonto_(t) {
   // Prioriza montos junto a la palabra "monto"/"total"; si no, el primero con signo $.
-  const etiquetado = t.match(/(?:monto|total|importe|valor)[^$\d]{0,30}\$\s*([0-9]{1,3}(?:\.[0-9]{3})+|[0-9]+)(?:,[0-9]{1,2})?/i);
-  const simple = t.match(/\$\s*([0-9]{1,3}(?:\.[0-9]{3})+|[0-9]+)(?:,[0-9]{1,2})?/);
+  // "(?<![A-Za-z])" evita tomar "US$ 12,50" como pesos.
+  const etiquetado = t.match(/(?:monto|total|importe|valor)[^$\d]{0,30}(?<![A-Za-z])\$\s*([0-9]{1,3}(?:\.[0-9]{3})+|[0-9]+)(?:,[0-9]{1,2})?/i);
+  const simple = t.match(/(?<![A-Za-z])\$\s*([0-9]{1,3}(?:\.[0-9]{3})+|[0-9]+)(?:,[0-9]{1,2})?/);
   const m = etiquetado || simple;
   if (!m) return 0;
   return Number(m[1].replace(/\./g, '')) || 0;
@@ -515,7 +596,7 @@ function construirMovimiento_(id, datos, cuenta, origen, fecha, config) {
     descripcion: datos.descripcion,
     cuenta: cuenta,
     origen: origen,
-    notas: '',
+    notas: datos.nota || '',
     creado: ahora,
     actualizado: ahora,
     eliminado: false,
@@ -643,6 +724,7 @@ function probarNotificacion() {
   const ejemplos = [
     'El 18-10-2026 14:38 se realizó una compra con tu Tarjeta de Débito terminada en 4230 en TUU*EL GRAN POLLO      PUERTO MONTT  CL por $16.100.',
     'El 18-10-2026 17:39:49 se realizó una Transferencia hacia tu cuenta 000084898180 por $ 8.000. Saludos',
+    'El 15-11-2026 18:33 se realizó una compra online con tu Tarjeta de Débito terminada en 4230 en ANTHROPIC* CLAUDE SUB  +14152360599  US por USD 23,80.',
   ];
   ejemplos.forEach(function (e) { Logger.log(e + '\n→ ' + JSON.stringify(interpretarTexto(e, 'Santander'))); });
 }
